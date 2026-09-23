@@ -1,0 +1,16 @@
+{
+  "name": "midia-indoor",
+  "version": "1.0.0",
+  "description": "Digital signage platform for indoor advertising",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "better-sqlite3": "^9.0.0"
+  },
+  "author": "Marcos Vinicios",
+  "license": "MIT"
+}

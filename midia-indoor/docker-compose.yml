@@ -1,0 +1,35 @@
+version: '3.9'
+
+services:
+  signage:
+    build: .
+    container_name: midia-indoor-app
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    networks:
+      - signage-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: midia-indoor-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - signage
+    restart: unless-stopped
+    networks:
+      - signage-network
+
+networks:
+  signage-network:
+    driver: bridge

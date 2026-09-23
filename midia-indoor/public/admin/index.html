@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Mídia Indoor</title>
+    <link rel="stylesheet" href="app.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2>Mídia Indoor</h2>
+            <nav>
+                <a href="#painel">📊 Painel</a>
+                <a href="#campanhas">📺 Campanhas</a>
+                <a href="#telas">📱 Telas</a>
+                <a href="#midias">🎥 Mídias</a>
+                <a href="#planos">💳 Planos</a>
+                <a href="#logout">🚪 Sair</a>
+            </nav>
+        </div>
+        <div class="main">
+            <div id="painel" class="page">
+                <h1>Painel de Controle</h1>
+                <p>Bem-vindo ao Mídia Indoor! Escolha uma opção no menu.</p>
+            </div>
+            <div id="campanhas" class="page" style="display:none;">
+                <h1>Campanhas</h1>
+                <button onclick="novasCampanhas()">+ Nova Campanha</button>
+                <div id="lista-campanhas"></div>
+            </div>
+            <div id="telas" class="page" style="display:none;">
+                <h1>Telas</h1>
+                <button onclick="novasTelas()">+ Nova Tela</button>
+                <div id="lista-telas"></div>
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
