@@ -2,6 +2,9 @@ FROM node:22-slim
 
 WORKDIR /app
 
+# Install Python and build essentials
+RUN apt-get update && apt-get install -y python3 build-essential && rm -rf /var/lib/apt/lists/*
+
 # Copy package files
 COPY package*.json ./
 
