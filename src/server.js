@@ -192,23 +192,24 @@ app.get('/api/campanhas', requireApiAuth, (req, res) => {
 });
 
 app.post('/api/campanhas', requireApiAuth, (req, res) => {
-  const { nome, descricao } = req.body;
+  const { nome, descricao, telas_ids } = req.body;
   if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
 
-  const stmt = db.prepare(`INSERT INTO campanhas (nome, descricao) VALUES (?, ?)`);
-  const result = stmt.run(nome, descricao || null);
+  const stmt = db.prepare(`INSERT INTO campanhas (nome, descricao, telas_ids) VALUES (?, ?, ?)`);
+  const result = stmt.run(nome, descricao || null, JSON.stringify(telas_ids || []));
   res.status(201).json(db.prepare(`SELECT * FROM campanhas WHERE id = ?`).get(result.lastInsertRowid));
 });
 
 app.put('/api/campanhas/:id', requireApiAuth, (req, res) => {
-  const { nome, descricao, status } = req.body;
+  const { nome, descricao, status, telas_ids } = req.body;
   const existing = db.prepare(`SELECT * FROM campanhas WHERE id = ?`).get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Campanha não encontrada' });
 
-  db.prepare(`UPDATE campanhas SET nome = ?, descricao = ?, status = ? WHERE id = ?`).run(
+  db.prepare(`UPDATE campanhas SET nome = ?, descricao = ?, status = ?, telas_ids = ? WHERE id = ?`).run(
     nome ?? existing.nome,
     descricao ?? existing.descricao,
     status ?? existing.status,
+    telas_ids ? JSON.stringify(telas_ids) : existing.telas_ids,
     req.params.id
   );
   res.json(db.prepare(`SELECT * FROM campanhas WHERE id = ?`).get(req.params.id));
@@ -388,9 +389,26 @@ app.post('/api/exibicoes', (req, res) => {
   res.status(201).json({ success: true });
 });
 
-/* Mídias públicas para o player de TV (sem auth) */
+/* Mídias públicas para o player de TV (sem auth).
+   Se vier ?tela_id=, retorna só as mídias vinculadas a essa tela
+   (via "Vincular telas" / grupos). Sem tela_id, mantém o comportamento
+   antigo (todas) por compatibilidade. */
 app.get('/api/public/midias', (req, res) => {
-  res.json(db.prepare(`SELECT * FROM midias ORDER BY criado_em DESC`).all());
+  const telaId = req.query.tela_id ? Number(req.query.tela_id) : null;
+  const todas = db.prepare(`SELECT * FROM midias ORDER BY criado_em DESC`).all();
+
+  if (!telaId) return res.json(todas);
+
+  const grupos = db.prepare(`SELECT midias_ids, telas_ids FROM grupos WHERE status IS NULL OR status != 'inativo'`).all();
+  const midiaIdsPermitidos = new Set();
+  grupos.forEach(g => {
+    const telasIds = JSON.parse(g.telas_ids || '[]');
+    if (telasIds.includes(telaId)) {
+      JSON.parse(g.midias_ids || '[]').forEach(id => midiaIdsPermitidos.add(id));
+    }
+  });
+
+  res.json(todas.filter(m => midiaIdsPermitidos.has(m.id)));
 });
 
 /* ============================================================

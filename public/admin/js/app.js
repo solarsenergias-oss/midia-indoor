@@ -805,20 +805,24 @@ async function deleteMidia(id) {
 /* ---------------- Grupos de mídia ---------------- */
 async function renderGrupos() {
   state.grupos = await api('/grupos') || [];
-  state.midias = state.midias.length ? state.midias : (await api('/midias') || []);
-  state.telas = state.telas.length ? state.telas : (await api('/telas') || []);
-  $('#topbarActions').innerHTML = `<button class="btn btn-primary" onclick="openNovoGrupoModal()">+ Novo grupo</button>`;
+  state.midias = await api('/midias') || [];
+  state.telas = await api('/telas') || [];
+  $('#topbarActions').innerHTML = `<button class="btn btn-primary" onclick="openNovoGrupoModal()">+ Vincular mídias a telas</button>`;
 
   const rows = state.grupos.map(g => {
     const qtdMidias = JSON.parse(g.midias_ids || '[]').length;
+    const telasIds = JSON.parse(g.telas_ids || '[]');
+    const nomesTelas = telasIds.map(id => state.telas.find(t => t.id === id)?.nome).filter(Boolean).join(', ') || '—';
     return `
     <tr>
       <td><strong>${g.nome}</strong></td>
       <td>${qtdMidias} mídia(s)</td>
+      <td>${nomesTelas}</td>
       <td><span class="status-pill ${g.status === 'ativo' ? 'online' : 'offline'}">${g.status || 'ativo'}</span></td>
       <td>${timeAgo(g.criado_em)}</td>
       <td>
         <div class="action-icons">
+          <button title="Editar" onclick="editGrupo(${g.id})">✏️</button>
           <button title="Excluir" class="danger" onclick="deleteGrupo(${g.id})">🗑️</button>
         </div>
       </td>
@@ -827,18 +831,16 @@ async function renderGrupos() {
 
   $('#content').innerHTML = `
     <div class="table-wrap">
-      <div class="table-toolbar" style="justify-content:flex-end;">
-        <button class="btn btn-secondary btn-sm">🔽 Filtros</button>
-      </div>
+      <p class="text-muted" style="font-size:13px;margin:0 0 12px;">Aqui você escolhe quais mídias aparecem em quais telas. Crie um vínculo, marque as mídias e as telas desejadas.</p>
       ${state.grupos.length === 0 ? `
         <div class="empty-state">
           <div class="icon">🗂️</div>
-          <h4>Nenhum registro encontrado</h4>
-          <p>A consulta solicitada não retornou nenhum registro para ser exibido.</p>
+          <h4>Nenhum vínculo criado ainda</h4>
+          <p>Suas telas não vão exibir nenhuma mídia até você criar um vínculo aqui.</p>
         </div>
       ` : `
         <table>
-          <thead><tr><th>Grupo</th><th>Mídias</th><th>Status</th><th>Última alteração</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Nome</th><th>Mídias</th><th>Telas</th><th>Status</th><th>Última alteração</th><th>Ações</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       `}
@@ -846,44 +848,50 @@ async function renderGrupos() {
   `;
 }
 
-function openNovoGrupoModal(tab = 'info', selMidias = [], selTelas = []) {
+function openNovoGrupoModal(grupoId = null) {
+  const grupo = grupoId ? state.grupos.find(g => g.id === grupoId) : null;
+  const selMidias = grupo ? JSON.parse(grupo.midias_ids || '[]') : [];
+  const selTelas = grupo ? JSON.parse(grupo.telas_ids || '[]') : [];
+
   openModal(`
     <div class="modal-header">
-      <h3>Novo grupo</h3>
+      <h3>${grupo ? 'Editar vínculo' : 'Vincular mídias a telas'}</h3>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
-    <div class="modal-tabs">
-      <div class="modal-tab ${tab === 'info' ? 'active' : ''}" onclick="openNovoGrupoModal('info', ${JSON.stringify(selMidias)}, ${JSON.stringify(selTelas)})">ⓘ Info</div>
-      <div class="modal-tab ${tab === 'rapida' ? 'active' : ''}" onclick="openNovoGrupoModal('rapida', ${JSON.stringify(selMidias)}, ${JSON.stringify(selTelas)})">🔒 Inclusão rápida</div>
-    </div>
     <div class="modal-body">
-      ${tab === 'info' ? `
-        <form id="formGrupo">
-          <div class="form-group">
-            <label class="form-label">Imagem</label>
-            <div class="upload-box">📤 Escolher arquivo...</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Nome</label>
-            <input class="form-input" name="nome" placeholder="Ex: Loterias Caixa" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Mídias</label>
-            <input class="form-input" placeholder="Busque pelo nome da mídia..." list="listaMidias">
-            <datalist id="listaMidias">${state.midias.map(m => `<option value="${m.nome}">`).join('')}</datalist>
-          </div>
-          ${selMidias.length ? `<p class="text-muted" style="font-size:12px;">${selMidias.length} mídia(s) selecionada(s)</p>` : ''}
-          <p class="form-hint">O conteúdo só será reproduzido à tela de mesma orientação</p>
-        </form>
-      ` : `
+      <form id="formGrupo">
+        <input type="hidden" name="id" value="${grupo ? grupo.id : ''}">
         <div class="form-group">
-          <div style="font-weight:600;margin-bottom:6px;">🔒 Inclusão rápida</div>
-          <p class="text-muted" style="font-size:12px;">Quer economizar tempo? Use esta opção pra incluir essa mídia em várias telas de uma vez só, sem precisar incluir uma por uma depois. A mídia sempre irá para o final da playlist.</p>
-          <label class="form-label">Telas disponíveis</label>
-          <input class="form-input" placeholder="Busque pelo nome da tela..." list="listaTelas">
-          <datalist id="listaTelas">${state.telas.map(t => `<option value="${t.nome}">`).join('')}</datalist>
+          <label class="form-label">Nome do vínculo</label>
+          <input class="form-input" name="nome" placeholder="Ex: Promoção de verão" value="${grupo ? grupo.nome : ''}" required>
         </div>
-      `}
+        <div class="form-group">
+          <label class="form-label">Mídias</label>
+          ${state.midias.length === 0 ? '<p class="text-muted" style="font-size:12px;">Nenhuma mídia cadastrada ainda.</p>' : `
+            <div style="max-height:160px;overflow-y:auto;border:1px solid var(--border,#333);border-radius:8px;padding:8px;">
+              ${state.midias.map(m => `
+                <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">
+                  <input type="checkbox" name="midia_check" value="${m.id}" ${selMidias.includes(m.id) ? 'checked' : ''}>
+                  ${m.nome} <span class="text-muted" style="font-size:11px;">(${tipoLabel(m.tipo)})</span>
+                </label>
+              `).join('')}
+            </div>
+          `}
+        </div>
+        <div class="form-group">
+          <label class="form-label">Telas</label>
+          ${state.telas.length === 0 ? '<p class="text-muted" style="font-size:12px;">Nenhuma tela cadastrada ainda.</p>' : `
+            <div style="max-height:160px;overflow-y:auto;border:1px solid var(--border,#333);border-radius:8px;padding:8px;">
+              ${state.telas.map(t => `
+                <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">
+                  <input type="checkbox" name="tela_check" value="${t.id}" ${selTelas.includes(t.id) ? 'checked' : ''}>
+                  ${t.nome} <span class="text-muted" style="font-size:11px;">(ID: ${t.id})</span>
+                </label>
+              `).join('')}
+            </div>
+          `}
+        </div>
+      </form>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
@@ -892,12 +900,25 @@ function openNovoGrupoModal(tab = 'info', selMidias = [], selTelas = []) {
   `);
 }
 
+function editGrupo(id) {
+  openNovoGrupoModal(id);
+}
+
 async function submitGrupo() {
   const form = $('#formGrupo');
-  const nome = form ? form.nome.value : ($('#content') && '');
-  if (!nome) { toast('Informe o nome do grupo', 'error'); return; }
-  const result = await api('/grupos', { method: 'POST', body: JSON.stringify({ nome }) });
-  if (result) { toast('Grupo criado!'); closeModal(); renderGrupos(); }
+  const nome = form.nome.value.trim();
+  if (!nome) { toast('Informe o nome do vínculo', 'error'); return; }
+
+  const midias_ids = $all('input[name="midia_check"]:checked').map(el => Number(el.value));
+  const telas_ids = $all('input[name="tela_check"]:checked').map(el => Number(el.value));
+  const id = form.id.value;
+
+  const payload = { nome, midias_ids, telas_ids };
+  const result = id
+    ? await api(`/grupos/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+    : await api('/grupos', { method: 'POST', body: JSON.stringify(payload) });
+
+  if (result) { toast(id ? 'Vínculo atualizado!' : 'Vínculo criado!'); closeModal(); renderGrupos(); }
 }
 
 async function deleteGrupo(id) {

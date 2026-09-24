@@ -115,4 +115,8 @@ if (!midiaCols.includes('orientacao')) db.exec(`ALTER TABLE midias ADD COLUMN or
 if (!midiaCols.includes('status')) db.exec(`ALTER TABLE midias ADD COLUMN status TEXT DEFAULT 'ativo'`);
 if (!midiaCols.includes('grupo_id')) db.exec(`ALTER TABLE midias ADD COLUMN grupo_id INTEGER`);
 
+/* Migração leve: campanhas precisam saber em quais telas devem aparecer */
+const campanhaCols = db.prepare(`PRAGMA table_info(campanhas)`).all().map(c => c.name);
+if (!campanhaCols.includes('telas_ids')) db.exec(`ALTER TABLE campanhas ADD COLUMN telas_ids TEXT DEFAULT '[]'`);
+
 module.exports = db;
