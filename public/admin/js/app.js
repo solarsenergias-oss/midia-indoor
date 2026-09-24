@@ -116,9 +116,7 @@ const titles = {
   avisos: ['Conteúdos', 'Avisos'],
   utilitarios: ['Conteúdos', 'Utilitários'],
   clientes: ['Home', 'Clientes'],
-  planos: ['Home', 'Planos'],
   relatorios: ['Home', 'Relatórios'],
-  configuracoes: ['Home', 'Configurações'],
 };
 
 function navigate(view) {
@@ -215,18 +213,18 @@ async function render() {
     case 'avisos': return renderEmConstrucao('🔔', 'Avisos', 'Crie avisos rápidos e urgentes para exibição imediata em todas as telas.');
     case 'utilitarios': return renderEmConstrucao('🧰', 'Utilitários', 'Ferramentas extras: relógio, previsão do tempo, cotações e contadores.');
     case 'clientes': return renderClientes();
-    case 'planos': return renderPlanos();
     case 'relatorios': return renderRelatorios();
-    case 'configuracoes': return renderConfiguracoes();
     default: content.innerHTML = '<p>View não encontrada</p>';
   }
 }
 
 /* ---------------- Dashboard ---------------- */
 async function renderDashboard() {
-  const stats = await api('/stats') || { telas_online: 0, telas_offline: 0, telas_total: 0, campanhas_ativas: 0, exibicoes_hoje: 0 };
+  const stats = await api('/stats') || { telas_online: 0, telas_offline: 0, telas_total: 0, campanhas_ativas: 0, exibicoes_hoje: 0, desempenho_semana: [0,0,0,0,0,0,0] };
   const content = $('#content');
   const pctOnline = stats.telas_total ? Math.round(stats.telas_online / stats.telas_total * 100) : 0;
+  const semana = stats.desempenho_semana || [0,0,0,0,0,0,0];
+  const maxSemana = Math.max(1, ...semana);
 
   const dias = ['DOM','SEG','TER','QUA','QUI','SEX','SÁB'];
   const meses = ['OUT','NOV','DEZ','JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET'];
@@ -248,10 +246,10 @@ async function renderDashboard() {
         <p class="text-muted" style="margin:10px 0 16px;font-size:12px;">${pctOnline}% das suas telas estão online</p>
         <div class="card-title" style="font-size:11px;color:var(--text-muted);letter-spacing:.04em;margin-bottom:10px;">DESEMPENHO DAS TELAS</div>
         <div style="display:flex;justify-content:space-between;gap:4px;">
-          ${dias.map(d => `
+          ${dias.map((d, i) => `
             <div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;">
-              <div style="width:100%;height:36px;background:var(--bg);border-radius:6px;display:flex;align-items:flex-end;overflow:hidden;">
-                <div style="width:100%;height:${Math.round(Math.random()*20)}%;background:var(--primary);border-radius:6px 6px 0 0;"></div>
+              <div style="width:100%;height:36px;background:var(--bg);border-radius:6px;display:flex;align-items:flex-end;overflow:hidden;" title="${semana[i]} exibição(ões)">
+                <div style="width:100%;height:${Math.round(semana[i] / maxSemana * 100)}%;background:${semana[i] ? 'var(--primary)' : 'transparent'};border-radius:6px 6px 0 0;"></div>
               </div>
               <span style="font-size:10px;color:var(--text-muted);">${d.slice(0,3).toLowerCase()}</span>
             </div>
@@ -260,11 +258,11 @@ async function renderDashboard() {
       </div>
 
       <div class="card">
-        <div class="card-header"><span class="card-title">Seu plano</span></div>
-        <div class="stat-value" style="font-size:26px;">∞ <span style="font-size:14px;color:var(--text-muted);font-weight:500;">/ 3</span></div>
-        <a href="#" onclick="navigate('planos');return false;" style="font-size:12px;font-weight:700;color:var(--primary);display:inline-block;margin:6px 0 16px;">Amplie sua rede agora →</a>
+        <div class="card-header"><span class="card-title">Minha rede</span></div>
+        <div class="stat-value" style="font-size:26px;">${stats.telas_total}</div>
+        <div style="font-size:12px;color:var(--text-muted);margin:2px 0 16px;">tela(s) cadastrada(s)</div>
         <div style="background:var(--bg);border-radius:var(--radius-sm);padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">
-          ${stats.telas_total ? `${stats.telas_total} tela(s) cadastrada(s)` : 'Nenhuma tela cadastrada ainda.'}
+          ${stats.telas_total ? `${stats.telas_online} online agora` : 'Nenhuma tela cadastrada ainda.'}
         </div>
       </div>
 
@@ -374,7 +372,7 @@ async function renderTelas() {
 
   const rows = filtered.map(t => `
     <tr>
-      <td><strong>${t.nome}</strong><div class="text-muted" style="font-size:11px;">${t.localizacao || '—'}</div></td>
+      <td><strong>${t.nome}</strong><div class="text-muted" style="font-size:11px;">${t.localizacao || '—'} · ID: ${t.id}</div></td>
       <td><span class="status-pill ${t.status === 'online' ? 'online' : 'offline'}">${t.status === 'online' ? 'Online' : 'Offline'}</span></td>
       <td>${t.orientacao || 'Horizontal'}</td>
       <td>${timeAgo(t.ultima_comunicacao)}</td>
@@ -671,11 +669,12 @@ function openNovaMidiaModal() {
 
 function openMidiaFormModal(tipo) {
   const labels = {
-    imagem: { titulo: 'Vídeo/imagem', urlLabel: 'Arquivo', urlPlaceholder: 'Escolher arquivo...' },
+    imagem: { titulo: 'Vídeo/imagem' },
     youtube: { titulo: 'Vídeo YouTube', urlLabel: 'URL do vídeo', urlPlaceholder: 'https://youtube.com/watch?v=...' },
     link: { titulo: 'Link externo', urlLabel: 'URL', urlPlaceholder: 'https://exemplo.com' },
     programatica: { titulo: 'Mídia programática', urlLabel: 'Tag / URL do parceiro', urlPlaceholder: 'https://...' },
   }[tipo];
+  const isUpload = tipo === 'imagem';
 
   openModal(`
     <div class="modal-header">
@@ -689,10 +688,18 @@ function openMidiaFormModal(tipo) {
           <label class="form-label">Nome</label>
           <input class="form-input" name="nome" placeholder="Ex: Promoção de verão" required>
         </div>
-        <div class="form-group">
-          <label class="form-label">${labels.urlLabel}</label>
-          <input class="form-input" name="url" placeholder="${labels.urlPlaceholder}" required>
-        </div>
+        ${isUpload ? `
+          <div class="form-group">
+            <label class="form-label">Arquivo (imagem ou vídeo)</label>
+            <input class="form-input" name="arquivo" type="file" accept="image/*,video/*" required>
+            <p class="form-hint">Selecione o arquivo do seu computador. Tamanho máximo: 200MB.</p>
+          </div>
+        ` : `
+          <div class="form-group">
+            <label class="form-label">${labels.urlLabel}</label>
+            <input class="form-input" name="url" placeholder="${labels.urlPlaceholder}" required>
+          </div>
+        `}
         <div class="form-group">
           <label class="form-label">Orientação</label>
           <select class="form-select" name="orientacao">
@@ -704,16 +711,41 @@ function openMidiaFormModal(tipo) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="openNovaMidiaModal()">← Voltar</button>
-      <button class="btn btn-primary" onclick="submitMidia()">Salvar mídia</button>
+      <button class="btn btn-primary" id="btnSalvarMidia" onclick="submitMidia()">Salvar mídia</button>
     </div>
   `);
 }
 
 async function submitMidia() {
   const form = $('#formMidia');
+  const btn = $('#btnSalvarMidia');
+  const fileInput = form.querySelector('input[name="arquivo"]');
   const data = Object.fromEntries(new FormData(form));
+
+  if (fileInput) {
+    const file = fileInput.files[0];
+    if (!file) { toast('Selecione um arquivo', 'error'); return; }
+    btn.disabled = true;
+    btn.textContent = 'Enviando...';
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', credentials: 'include', body: fd });
+      if (!res.ok) throw new Error('Falha no upload');
+      const uploaded = await res.json();
+      data.url = uploaded.url;
+    } catch (err) {
+      toast('Erro ao enviar o arquivo', 'error');
+      btn.disabled = false;
+      btn.textContent = 'Salvar mídia';
+      return;
+    }
+    delete data.arquivo;
+  }
+
   const result = await api('/midias', { method: 'POST', body: JSON.stringify(data) });
   if (result) { toast('Mídia cadastrada!'); closeModal(); renderMidias(); }
+  else if (btn) { btn.disabled = false; btn.textContent = 'Salvar mídia'; }
 }
 
 function editMidia(id) {
@@ -1233,35 +1265,6 @@ async function deleteCliente(id) {
   if (result) { toast('Cliente removido'); renderClientes(); }
 }
 
-/* ---------------- Planos ---------------- */
-function renderPlanos() {
-  $('#content').innerHTML = `
-    <div class="grid grid-3">
-      <div class="card">
-        <div class="icon-box purple">🎯</div>
-        <h3 style="margin:14px 0 6px;">Básico</h3>
-        <div class="stat-value">Grátis</div>
-        <p class="text-muted" style="margin:12px 0;">Até 1 tela • Suporte básico</p>
-        <button class="btn btn-secondary" style="width:100%;">Plano atual</button>
-      </div>
-      <div class="card" style="border-color:var(--primary);">
-        <div class="icon-box purple">🚀</div>
-        <h3 style="margin:14px 0 6px;">Profissional</h3>
-        <div class="stat-value">R$ 99<span style="font-size:14px;color:var(--text-muted);">/mês</span></div>
-        <p class="text-muted" style="margin:12px 0;">Até 10 telas • Relatórios avançados</p>
-        <button class="btn btn-primary" style="width:100%;">Assinar agora</button>
-      </div>
-      <div class="card">
-        <div class="icon-box purple">💎</div>
-        <h3 style="margin:14px 0 6px;">Enterprise</h3>
-        <div class="stat-value">Sob consulta</div>
-        <p class="text-muted" style="margin:12px 0;">Telas ilimitadas • Suporte dedicado</p>
-        <button class="btn btn-secondary" style="width:100%;">Falar com vendas</button>
-      </div>
-    </div>
-  `;
-}
-
 /* ---------------- Helper: página em construção ---------------- */
 function renderEmConstrucao(icon, titulo, descricao) {
   $('#content').innerHTML = `
@@ -1442,24 +1445,6 @@ async function salvarConta() {
     toast('Configurações salvas!');
     closeModal();
   }
-}
-
-/* ---------------- Configurações ---------------- */
-function renderConfiguracoes() {
-  $('#content').innerHTML = `
-    <div class="card" style="max-width:500px;">
-      <div class="card-header"><span class="card-title">Perfil</span></div>
-      <div class="form-group">
-        <label class="form-label">Nome</label>
-        <input class="form-input" value="Marcos" disabled>
-      </div>
-      <div class="form-group">
-        <label class="form-label">E-mail</label>
-        <input class="form-input" value="solarsenergias@gmail.com" disabled>
-      </div>
-      <button class="btn btn-secondary">Alterar senha</button>
-    </div>
-  `;
 }
 
 /* ---------------- Init ---------------- */

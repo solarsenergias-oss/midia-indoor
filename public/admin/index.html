@@ -21,38 +21,29 @@
 
     <nav class="sidebar-nav">
       <div class="nav-section-title">Principal</div>
-      <a class="nav-item" data-view="dashboard"><span class="icon">📊</span> Dashboard</a>
-      <a class="nav-item" data-view="telas"><span class="icon">📺</span> Minhas Telas</a>
-      <a class="nav-item" data-view="campanhas"><span class="icon">📢</span> Campanhas</a>
+      <a class="nav-item" data-view="dashboard"><span class="icon">📊</span><span class="nav-label">Dashboard</span></a>
+      <a class="nav-item" data-view="telas"><span class="icon">📺</span><span class="nav-label">Minhas Telas</span></a>
+      <a class="nav-item" data-view="campanhas"><span class="icon">📢</span><span class="nav-label">Campanhas</span></a>
 
       <div class="nav-item" id="conteudosToggle" style="cursor:pointer;">
-        <span class="icon">🖼️</span> Conteúdos <span style="margin-left:auto;font-size:11px;transition:transform .15s ease;" id="conteudosChevron">▾</span>
+        <span class="icon">🖼️</span><span class="nav-label">Conteúdos</span> <span style="margin-left:auto;font-size:11px;transition:transform .15s ease;" id="conteudosChevron">▾</span>
       </div>
       <div id="conteudosSubmenu" style="display:none;padding-left:16px;">
-        <a class="nav-item" data-view="midias"><span class="icon">🎞️</span> Minhas mídias</a>
-        <a class="nav-item" data-view="grupos"><span class="icon">🗂️</span> Grupos de mídia</a>
-        <a class="nav-item" data-view="conteudos-dinamicos"><span class="icon">⚡</span> Conteúdos dinâmicos</a>
-        <a class="nav-item" data-view="instagram"><span class="icon">📷</span> Instagram</a>
-        <a class="nav-item" data-view="rss"><span class="icon">📡</span> RSS Personalizado</a>
-        <a class="nav-item" data-view="avisos"><span class="icon">🔔</span> Avisos</a>
-        <a class="nav-item" data-view="utilitarios"><span class="icon">🧰</span> Utilitários</a>
+        <a class="nav-item" data-view="midias"><span class="icon">🎞️</span><span class="nav-label">Minhas mídias</span></a>
+        <a class="nav-item" data-view="grupos"><span class="icon">🗂️</span><span class="nav-label">Grupos de mídia</span></a>
+        <a class="nav-item" data-view="conteudos-dinamicos"><span class="icon">⚡</span><span class="nav-label">Conteúdos dinâmicos</span></a>
+        <a class="nav-item" data-view="instagram"><span class="icon">📷</span><span class="nav-label">Instagram</span></a>
+        <a class="nav-item" data-view="rss"><span class="icon">📡</span><span class="nav-label">RSS Personalizado</span></a>
+        <a class="nav-item" data-view="avisos"><span class="icon">🔔</span><span class="nav-label">Avisos</span></a>
+        <a class="nav-item" data-view="utilitarios"><span class="icon">🧰</span><span class="nav-label">Utilitários</span></a>
       </div>
 
       <div class="nav-section-title">Negócio</div>
-      <a class="nav-item" data-view="clientes"><span class="icon">👥</span> Clientes</a>
-      <a class="nav-item" data-view="planos"><span class="icon">💳</span> Planos</a>
-      <a class="nav-item" data-view="relatorios"><span class="icon">📈</span> Relatórios</a>
-
-      <div class="nav-section-title">Sistema</div>
-      <a class="nav-item" data-view="configuracoes"><span class="icon">⚙️</span> Configurações</a>
+      <a class="nav-item" data-view="clientes"><span class="icon">👥</span><span class="nav-label">Clientes</span></a>
+      <a class="nav-item" data-view="relatorios"><span class="icon">📈</span><span class="nav-label">Relatórios</span></a>
     </nav>
 
     <div class="sidebar-footer">
-      <div class="upgrade-card">
-        <h4>🚀 Plano Gratuito</h4>
-        <p>Você está no plano free. Amplie sua rede de telas.</p>
-        <a href="#" data-view="planos">Ver planos →</a>
-      </div>
       <div class="footer-icons" id="footerIcons">
         <button class="btn-icon" title="Usuários" onclick="toast('Gerenciamento de usuários em breve')">👥</button>
         <button class="btn-icon" title="Notificações" onclick="toast('Nenhuma notificação nova')">🔔</button>

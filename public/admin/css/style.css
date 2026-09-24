@@ -633,7 +633,7 @@ tbody tr:hover { background: var(--bg); }
 .sidebar.collapsed .sidebar-logo .logo-text,
 .sidebar.collapsed .sidebar-logo .logo-sub,
 .sidebar.collapsed .nav-section-title,
-.sidebar.collapsed .nav-item span:not(.icon),
+.sidebar.collapsed .nav-item .nav-label,
 .sidebar.collapsed .nav-item .badge,
 .sidebar.collapsed #conteudosChevron,
 .sidebar.collapsed #conteudosSubmenu,
@@ -643,15 +643,20 @@ tbody tr:hover { background: var(--bg); }
 .sidebar.collapsed .footer-icons {
   display: none !important;
 }
+.sidebar.collapsed {
+  overflow: hidden;
+}
 .sidebar.collapsed .sidebar-logo {
   justify-content: center;
 }
 .sidebar.collapsed .nav-item {
   justify-content: center;
   padding: 12px 8px;
+  white-space: nowrap;
 }
 .sidebar.collapsed .nav-item .icon {
   font-size: 18px;
+  margin: 0;
 }
 .sidebar.collapsed .user-menu {
   justify-content: center !important;

@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const db = require('./db');
 const auth = require('./auth');
 
@@ -9,6 +11,20 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '500mb' }));
+
+/* ---------- Upload de arquivos de mídia (imagens/vídeos) ---------- */
+const uploadsDir = path.join(__dirname, '../public/uploads/midias');
+fs.mkdirSync(uploadsDir, { recursive: true });
+
+const uploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '';
+    const nomeUnico = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    cb(null, nomeUnico);
+  },
+});
+const upload = multer({ storage: uploadStorage, limits: { fileSize: 200 * 1024 * 1024 } });
 
 /* ---------- Cookie parsing simples (sem dependência extra) ---------- */
 app.use((req, res, next) => {
@@ -112,12 +128,23 @@ app.get('/api/stats', requireApiAuth, (req, res) => {
   const campanhas_ativas = db.prepare(`SELECT COUNT(*) as c FROM campanhas WHERE status = 'ativa'`).get().c;
   const exibicoes_hoje = db.prepare(`SELECT COUNT(*) as c FROM exibicoes WHERE date(exibido_em) = date('now')`).get().c;
 
+  /* Exibições reais dos últimos 7 dias, por dia da semana (0=domingo ... 6=sábado) */
+  const linhas = db.prepare(`
+    SELECT strftime('%w', exibido_em) as dow, COUNT(*) as c
+    FROM exibicoes
+    WHERE exibido_em >= datetime('now', '-6 days')
+    GROUP BY dow
+  `).all();
+  const desempenho_semana = [0, 0, 0, 0, 0, 0, 0];
+  linhas.forEach(l => { desempenho_semana[Number(l.dow)] = l.c; });
+
   res.json({
     telas_online,
     telas_offline: telas_total - telas_online,
     telas_total,
     campanhas_ativas,
     exibicoes_hoje,
+    desempenho_semana,
   });
 });
 
@@ -190,6 +217,14 @@ app.put('/api/campanhas/:id', requireApiAuth, (req, res) => {
 app.delete('/api/campanhas/:id', requireApiAuth, (req, res) => {
   db.prepare(`DELETE FROM campanhas WHERE id = ?`).run(req.params.id);
   res.json({ success: true });
+});
+
+/* ============================================================
+   API — Upload de arquivo (usado pela tela "Nova mídia")
+   ============================================================ */
+app.post('/api/upload', requireApiAuth, upload.single('arquivo'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+  res.status(201).json({ url: `/uploads/midias/${req.file.filename}`, nome: req.file.originalname });
 });
 
 /* ============================================================
