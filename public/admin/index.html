@@ -1,68 +1,94 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mídia Indoor - Admin Panel</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; padding: 20px; }
-    .container { max-width: 1200px; margin: 0 auto; }
-    h1 { color: #00ff88; margin-bottom: 30px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-    .card { background: #2a2a2a; padding: 20px; border-radius: 8px; border-left: 4px solid #00ff88; }
-    .card h2 { color: #00ff88; margin-bottom: 10px; }
-    .card p { color: #aaa; line-height: 1.6; }
-    button { background: #00ff88; color: #000; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-    button:hover { background: #00dd66; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mídia Indoor - Painel</title>
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div class="container">
-    <h1>🎬 Mídia Indoor - Admin Panel</h1>
-    <p style="margin-bottom: 30px; color: #888;">Plataforma de Digital Signage para Propaganda Indoor</p>
-    
-    <div class="grid">
-      <div class="card">
-        <h2>📺 Telas</h2>
-        <p>Gerenciar TV boxes conectadas. Monitorar status, localização e saúde dos dispositivos.</p>
-        <button onclick="alert('Seção de Telas - Em desenvolvimento')">Acessar</button>
-      </div>
-      
-      <div class="card">
-        <h2>📢 Campanhas</h2>
-        <p>Criar e gerenciar campanhas de publicidade. Definir horários e duração.</p>
-        <button onclick="alert('Seção de Campanhas - Em desenvolvimento')">Acessar</button>
-      </div>
-      
-      <div class="card">
-        <h2>🖼️ Mídias</h2>
-        <p>Upload de imagens, vídeos e conteúdo. Organizar por categoria.</p>
-        <button onclick="alert('Seção de Mídias - Em desenvolvimento')">Acessar</button>
-      </div>
-      
-      <div class="card">
-        <h2>👥 Anunciantes</h2>
-        <p>Gerenciar contas de anunciantes e permissões de acesso.</p>
-        <button onclick="alert('Seção de Anunciantes - Em desenvolvimento')">Acessar</button>
-      </div>
-      
-      <div class="card">
-        <h2>📊 Relatórios</h2>
-        <p>Visualizar estatísticas de exibição e performance das campanhas.</p>
-        <button onclick="alert('Seção de Relatórios - Em desenvolvimento')">Acessar</button>
-      </div>
-      
-      <div class="card">
-        <h2>⚙️ Configurações</h2>
-        <p>Planos, integrações e preferências do sistema.</p>
-        <button onclick="alert('Seção de Configurações - Em desenvolvimento')">Acessar</button>
+<div class="app">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">M</div>
+      <div>
+        <div class="logo-text">Mídia Indoor</div>
+        <div class="logo-sub">Digital Signage</div>
       </div>
     </div>
-    
-    <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #444; text-align: center; color: #888;">
-      <p>Mídia Indoor © 2024 • Solars Energias</p>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-title">Principal</div>
+      <a class="nav-item" data-view="dashboard"><span class="icon">📊</span> Dashboard</a>
+      <a class="nav-item" data-view="telas"><span class="icon">📺</span> Minhas Telas</a>
+      <a class="nav-item" data-view="campanhas"><span class="icon">📢</span> Campanhas</a>
+
+      <div class="nav-item" id="conteudosToggle" style="cursor:pointer;">
+        <span class="icon">🖼️</span> Conteúdos <span style="margin-left:auto;font-size:11px;transition:transform .15s ease;" id="conteudosChevron">▾</span>
+      </div>
+      <div id="conteudosSubmenu" style="display:none;padding-left:16px;">
+        <a class="nav-item" data-view="midias"><span class="icon">🎞️</span> Minhas mídias</a>
+        <a class="nav-item" data-view="grupos"><span class="icon">🗂️</span> Grupos de mídia</a>
+        <a class="nav-item" data-view="conteudos-dinamicos"><span class="icon">⚡</span> Conteúdos dinâmicos</a>
+        <a class="nav-item" data-view="instagram"><span class="icon">📷</span> Instagram</a>
+        <a class="nav-item" data-view="rss"><span class="icon">📡</span> RSS Personalizado</a>
+        <a class="nav-item" data-view="avisos"><span class="icon">🔔</span> Avisos</a>
+        <a class="nav-item" data-view="utilitarios"><span class="icon">🧰</span> Utilitários</a>
+      </div>
+
+      <div class="nav-section-title">Negócio</div>
+      <a class="nav-item" data-view="clientes"><span class="icon">👥</span> Clientes</a>
+      <a class="nav-item" data-view="planos"><span class="icon">💳</span> Planos</a>
+      <a class="nav-item" data-view="relatorios"><span class="icon">📈</span> Relatórios</a>
+
+      <div class="nav-section-title">Sistema</div>
+      <a class="nav-item" data-view="configuracoes"><span class="icon">⚙️</span> Configurações</a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="upgrade-card">
+        <h4>🚀 Plano Gratuito</h4>
+        <p>Você está no plano free. Amplie sua rede de telas.</p>
+        <a href="#" data-view="planos">Ver planos →</a>
+      </div>
+      <div class="footer-icons" id="footerIcons">
+        <button class="btn-icon" title="Usuários" onclick="toast('Gerenciamento de usuários em breve')">👥</button>
+        <button class="btn-icon" title="Notificações" onclick="toast('Nenhuma notificação nova')">🔔</button>
+        <button class="btn-icon" id="themeToggle" title="Alternar tema">🌙</button>
+        <button class="btn-icon" title="Sair" onclick="logout()">🚪</button>
+      </div>
+      <div class="user-menu" onclick="openMinhaContaModal()" style="cursor:pointer;">
+        <div class="user-avatar" id="userAvatar">M</div>
+        <div class="user-info">
+          <div class="user-name" id="userName">Marcos</div>
+          <div class="user-email" id="userEmail">solarsenergias@gmail.com</div>
+        </div>
+      </div>
+      <button class="btn-icon" id="collapseToggle" title="Expandir menu" style="width:100%;margin-top:8px;border:1px solid var(--border);border-radius:var(--radius-sm);">⊟</button>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <div class="breadcrumb" id="breadcrumb">Home</div>
+        <div class="page-title" id="pageTitle">Dashboard</div>
+      </div>
+      <div class="topbar-actions" id="topbarActions"></div>
+    </div>
+
+    <div class="content" id="content">
+      <div class="loader"></div>
     </div>
   </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+<div class="modal-overlay" id="modalRoot"></div>
+
+<script src="js/app.js"></script>
 </body>
 </html>

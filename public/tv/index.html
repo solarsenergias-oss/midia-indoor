@@ -1,27 +1,59 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mídia Indoor - TV Player</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; background: #000; color: #fff; }
-    .player { width: 100vw; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-    .content { text-align: center; }
-    h1 { font-size: 48px; margin-bottom: 20px; color: #00ff88; }
-    p { font-size: 24px; color: #aaa; }
-    .status { position: absolute; top: 20px; right: 20px; padding: 10px 20px; background: #00ff88; color: #000; border-radius: 4px; font-weight: bold; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mídia Indoor - TV Player</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+  body { font-family: -apple-system, Arial, sans-serif; color: #fff; }
+  .player { width: 100vw; height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; }
+  .content { text-align: center; }
+  .logo { width: 90px; height: 90px; border-radius: 20px; background: linear-gradient(135deg,#7c3aed,#a855f7); display:flex; align-items:center; justify-content:center; font-size:42px; font-weight:800; margin: 0 auto 24px; }
+  h1 { font-size: 40px; margin-bottom: 12px; }
+  p { font-size: 18px; color: #9ca3af; }
+  .status { position: absolute; top: 24px; right: 24px; padding: 8px 18px; background: rgba(22,163,74,0.15); color: #4ade80; border: 1px solid #16a34a; border-radius: 20px; font-weight: 700; font-size: 13px; display:flex; align-items:center; gap:8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.4;} }
+  .clock { position: absolute; bottom: 24px; left: 24px; font-size: 16px; color: #6b7280; }
+  #mediaFrame { width:100%; height:100%; object-fit: cover; display:none; }
+</style>
 </head>
 <body>
   <div class="player">
-    <div class="status">🟢 ONLINE</div>
-    <div class="content">
-      <h1>📺 Mídia Indoor</h1>
-      <p>TV Player Pronto para Exibir Campanhas</p>
-      <p style="margin-top: 30px; font-size: 18px; color: #666;">Aguardando conexão com o servidor...</p>
+    <div class="status"><span class="dot"></span> ONLINE</div>
+    <div class="content" id="placeholder">
+      <div class="logo">M</div>
+      <h1>Mídia Indoor</h1>
+      <p>Aguardando conteúdo do servidor...</p>
     </div>
+    <img id="mediaFrame" alt="">
+    <div class="clock" id="clock"></div>
   </div>
+
+<script>
+  function tick() {
+    document.getElementById('clock').textContent = new Date().toLocaleString('pt-BR');
+  }
+  setInterval(tick, 1000);
+  tick();
+
+  // Placeholder: futuramente buscar mídias de /api/midias e alternar automaticamente
+  async function loadContent() {
+    try {
+      const res = await fetch('/api/public/midias');
+      const midias = await res.json();
+      if (midias.length > 0) {
+        console.log('Mídias disponíveis:', midias);
+        // TODO: implementar rotação de conteúdo
+      }
+    } catch (e) {
+      console.log('Servidor offline, mantendo tela padrão');
+    }
+  }
+  loadContent();
+  setInterval(loadContent, 60000);
+</script>
 </body>
 </html>

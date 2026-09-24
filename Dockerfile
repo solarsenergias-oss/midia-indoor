@@ -2,7 +2,7 @@ FROM node:22-slim
 
 WORKDIR /app
 
-# Install Python and build essentials
+# Install Python and build essentials (necessário para better-sqlite3)
 RUN apt-get update && apt-get install -y python3 build-essential && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
