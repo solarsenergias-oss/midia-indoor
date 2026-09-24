@@ -1,5 +1,5 @@
 /* ============================================================
-   Mídia Indoor — Admin App (SPA simples, sem build step)
+   VizzoPlay — Admin App (SPA simples, sem build step)
    ============================================================ */
 
 const API = '/api';
@@ -357,8 +357,55 @@ function saveNotes() {
 }
 
 /* ---------------- Telas ---------------- */
+const ESTADOS_BR = [
+  ['AC','Acre'],['AL','Alagoas'],['AP','Amapá'],['AM','Amazonas'],['BA','Bahia'],['CE','Ceará'],
+  ['DF','Distrito Federal'],['ES','Espírito Santo'],['GO','Goiás'],['MA','Maranhão'],['MT','Mato Grosso'],
+  ['MS','Mato Grosso do Sul'],['MG','Minas Gerais'],['PA','Pará'],['PB','Paraíba'],['PR','Paraná'],
+  ['PE','Pernambuco'],['PI','Piauí'],['RJ','Rio de Janeiro'],['RN','Rio Grande do Norte'],
+  ['RS','Rio Grande do Sul'],['RO','Rondônia'],['RR','Roraima'],['SC','Santa Catarina'],
+  ['SP','São Paulo'],['SE','Sergipe'],['TO','Tocantins'],
+];
+const DIAS_SEMANA_LABELS = ['D','S','T','Q','Q','S','S'];
+const FUSOS_BR = [
+  'America/Noronha', 'America/Fortaleza', 'America/Recife', 'America/Sao_Paulo',
+  'America/Bahia', 'America/Cuiaba', 'America/Manaus', 'America/Rio_Branco',
+];
+
+function telaFormPadrao() {
+  return {
+    id: null,
+    tipo_dispositivo: 'tv_monitor_tablet',
+    nome: '', orientacao: 'Horizontal', imagem: null, telefone1: '', telefone2: '',
+    endereco: '', numero: '', complemento: '', bairro: '', cep: '', estado: '', cidade: '',
+    latitude: null, longitude: null,
+    segmento: '', horario_inicio: '', horario_fim: '', dias_semana: [0,1,2,3,4,5,6],
+    fluxo_pessoas: '', classes_sociais: [],
+    grupo_id: '',
+    config: {
+      fuso_horario: 'America/Fortaleza', intervalo_atualizacao: 10,
+      permitir_som: false,
+      imagem_inicializacao_ativo: false, imagem_inicializacao: null,
+      exibir_rodape: false, personalizar_config: false,
+      rodape_imagem: null, rodape_cor_fundo: '#000000', rodape_cor_fonte: '#ffffff',
+      rodape_mensagem_ativo: false, rodape_mensagem: '', rodape_velocidade: 'Lenta',
+      rodape_mostrar_data: true, rodape_mostrar_hora: true, rodape_mostrar_clima: false, rodape_mostrar_icones: true,
+    },
+  };
+}
+
+function getNested(obj, path) {
+  return path.split('.').reduce((o, k) => (o == null ? o : o[k]), obj);
+}
+function setNested(obj, path, value) {
+  const partes = path.split('.');
+  const ultima = partes.pop();
+  const alvo = partes.reduce((o, k) => (o[k] = o[k] || {}), obj);
+  alvo[ultima] = value;
+}
+
 async function renderTelas() {
   state.telas = await api('/telas') || [];
+  state.grupos = await api('/grupos') || [];
   $('#topbarActions').innerHTML = `<button class="btn btn-primary" onclick="openNovaTelaModal()">+ Nova Tela</button>`;
 
   const filtered = state.telas.filter(t => {
@@ -370,11 +417,16 @@ async function renderTelas() {
   const onlineCount = state.telas.filter(t => t.status === 'online').length;
   const offlineCount = state.telas.length - onlineCount;
 
-  const rows = filtered.map(t => `
+  const rows = filtered.map(t => {
+    const qtdMidias = state.grupos.reduce((acc, g) => {
+      const telasIds = JSON.parse(g.telas_ids || '[]');
+      return telasIds.includes(t.id) ? acc + JSON.parse(g.midias_ids || '[]').length : acc;
+    }, 0);
+    return `
     <tr>
-      <td><strong>${t.nome}</strong><div class="text-muted" style="font-size:11px;">${t.localizacao || '—'} · ID: ${t.id}</div></td>
+      <td><strong>${t.nome}</strong><div class="text-muted" style="font-size:11px;">${t.localizacao || t.cidade || '—'} · ID: ${t.id}</div></td>
       <td><span class="status-pill ${t.status === 'online' ? 'online' : 'offline'}">${t.status === 'online' ? 'Online' : 'Offline'}</span></td>
-      <td>${t.orientacao || 'Horizontal'}</td>
+      <td>${qtdMidias || '—'}</td>
       <td>${timeAgo(t.ultima_comunicacao)}</td>
       <td>
         <div class="action-icons">
@@ -382,8 +434,8 @@ async function renderTelas() {
           <button title="Excluir" class="danger" onclick="deleteTela(${t.id})">🗑️</button>
         </div>
       </td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 
   $('#content').innerHTML = `
     <div class="table-wrap">
@@ -402,7 +454,7 @@ async function renderTelas() {
         </div>
       ` : `
         <table>
-          <thead><tr><th>Tela</th><th>Status</th><th>Orientação</th><th>Última comunicação</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Tela</th><th>Disponibilidade</th><th>Mídias vinculadas</th><th>Última comunicação</th><th>Ações</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       `}
@@ -412,6 +464,7 @@ async function renderTelas() {
 
 function setFiltroTelas(f) { state.filtroTelas = f; renderTelas(); }
 
+/* ---------------- Nova Tela: escolha do tipo ---------------- */
 function openNovaTelaModal() {
   openModal(`
     <div class="modal-header">
@@ -419,45 +472,474 @@ function openNovaTelaModal() {
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
-      <form id="formTela">
-        <div class="form-group">
-          <label class="form-label">Nome da tela</label>
-          <input class="form-input" name="nome" placeholder="Ex: TV Loja Centro" required>
+      <div class="select-cards">
+        <div class="select-card" style="cursor:pointer;" onclick="escolherTipoTela('tv_monitor_tablet')">
+          <div style="font-size:26px;margin-bottom:8px;">📺</div>TV, monitor, tablet
         </div>
-        <div class="form-group">
-          <label class="form-label">Localização</label>
-          <input class="form-input" name="localizacao" placeholder="Ex: Viçosa do Ceará - CE">
+        <div class="select-card" style="cursor:pointer;" onclick="escolherTipoTela('painel_led')">
+          <div style="font-size:26px;margin-bottom:8px;">🔲</div>Painel LED
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">Orientação</label>
-            <select class="form-select" name="orientacao">
-              <option value="Horizontal">Horizontal</option>
-              <option value="Vertical">Vertical</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Grupo de mídia</label>
-            <select class="form-select" name="grupo_id">
-              <option value="">Nenhum</option>
-            </select>
-          </div>
-        </div>
-      </form>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-primary" onclick="submitTela()">Salvar Tela</button>
+      </div>
     </div>
   `);
 }
 
-async function submitTela() {
-  const form = $('#formTela');
-  const data = Object.fromEntries(new FormData(form));
-  const result = await api('/telas', { method: 'POST', body: JSON.stringify(data) });
+function escolherTipoTela(tipo) {
+  state.telaForm = telaFormPadrao();
+  state.telaForm.tipo_dispositivo = tipo;
+  abrirTelaFormModal('info');
+}
+
+function editTela(id) {
+  const tela = state.telas.find(t => t.id === id);
+  if (!tela) return;
+  const padrao = telaFormPadrao();
+  let config = padrao.config;
+  try { config = { ...padrao.config, ...JSON.parse(tela.config || '{}') }; } catch (e) {}
+  state.telaForm = {
+    ...padrao,
+    id: tela.id,
+    tipo_dispositivo: tela.tipo_dispositivo || 'tv_monitor_tablet',
+    nome: tela.nome || '', orientacao: tela.orientacao || 'Horizontal', imagem: tela.imagem || null,
+    telefone1: tela.telefone1 || '', telefone2: tela.telefone2 || '',
+    endereco: tela.endereco || '', numero: tela.numero || '', complemento: tela.complemento || '',
+    bairro: tela.bairro || '', cep: tela.cep || '', estado: tela.estado || '', cidade: tela.cidade || '',
+    latitude: tela.latitude || null, longitude: tela.longitude || null,
+    segmento: tela.segmento || '', horario_inicio: tela.horario_inicio || '', horario_fim: tela.horario_fim || '',
+    dias_semana: (tela.dias_semana || '0,1,2,3,4,5,6').split(',').filter(Boolean).map(Number),
+    fluxo_pessoas: tela.fluxo_pessoas || '',
+    classes_sociais: (() => { try { return JSON.parse(tela.classes_sociais || '[]'); } catch (e) { return []; } })(),
+    grupo_id: tela.grupo_id || '',
+    config,
+  };
+  abrirTelaFormModal('info');
+}
+
+/* ---------------- Formulário com abas ---------------- */
+function capturarAbaAtual(aba) {
+  const f = state.telaForm;
+  if (aba === 'info') {
+    f.nome = document.getElementById('telaNome')?.value ?? f.nome;
+    f.telefone1 = document.getElementById('telaTelefone1')?.value ?? f.telefone1;
+    f.telefone2 = document.getElementById('telaTelefone2')?.value ?? f.telefone2;
+  } else if (aba === 'localizacao') {
+    f.endereco = document.getElementById('telaEndereco')?.value ?? f.endereco;
+    f.numero = document.getElementById('telaNumero')?.value ?? f.numero;
+    f.complemento = document.getElementById('telaComplemento')?.value ?? f.complemento;
+    f.bairro = document.getElementById('telaBairro')?.value ?? f.bairro;
+    f.cep = document.getElementById('telaCep')?.value ?? f.cep;
+    f.estado = document.getElementById('telaEstado')?.value ?? f.estado;
+    f.cidade = document.getElementById('telaCidade')?.value ?? f.cidade;
+  } else if (aba === 'metricas') {
+    f.segmento = document.getElementById('telaSegmento')?.value ?? f.segmento;
+    f.horario_inicio = document.getElementById('telaHoraInicio')?.value ?? f.horario_inicio;
+    f.horario_fim = document.getElementById('telaHoraFim')?.value ?? f.horario_fim;
+    f.fluxo_pessoas = document.getElementById('telaFluxoPessoas')?.value ?? f.fluxo_pessoas;
+  } else if (aba === 'configuracoes') {
+    f.config.fuso_horario = document.getElementById('telaFusoHorario')?.value ?? f.config.fuso_horario;
+    f.config.intervalo_atualizacao = document.getElementById('telaIntervalo')?.value ?? f.config.intervalo_atualizacao;
+    f.config.rodape_mensagem = document.getElementById('telaRodapeMensagem')?.value ?? f.config.rodape_mensagem;
+    f.config.rodape_velocidade = document.getElementById('telaRodapeVelocidade')?.value ?? f.config.rodape_velocidade;
+    f.config.rodape_cor_fundo = document.getElementById('telaRodapeCorFundo')?.value ?? f.config.rodape_cor_fundo;
+    f.config.rodape_cor_fonte = document.getElementById('telaRodapeCorFonte')?.value ?? f.config.rodape_cor_fonte;
+  }
+}
+
+function mudarAbaTela(abaAtual, novaAba) {
+  capturarAbaAtual(abaAtual);
+  abrirTelaFormModal(novaAba);
+}
+
+function fecharTelaForm() {
+  if (telaMapaInstancia) { telaMapaInstancia.remove(); telaMapaInstancia = null; }
+  closeModal();
+}
+
+let telaMapaInstancia = null;
+let telaMarcadorInstancia = null;
+
+function abrirTelaFormModal(aba) {
+  const f = state.telaForm;
+  const abas = [
+    ['info', 'ⓘ Info'],
+    ['localizacao', '📍 Localização'],
+    ['metricas', '📶 Métricas'],
+    ['configuracoes', '⚙️ Configurações'],
+  ];
+
+  openModal(`
+    <div class="modal-header">
+      <h3>${f.id ? 'Editar Tela' : 'Nova Tela'}</h3>
+      <button class="modal-close" onclick="fecharTelaForm()">✕</button>
+    </div>
+    <div class="modal-tabs">
+      ${abas.map(([key, label]) => `<div class="modal-tab ${aba === key ? 'active' : ''}" onclick="mudarAbaTela('${aba}', '${key}')">${label}</div>`).join('')}
+    </div>
+    <div class="modal-body" id="telaFormBody">${renderTelaAba(aba)}</div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharTelaForm()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarTelaForm('${aba}')">💾 Salvar</button>
+    </div>
+  `);
+
+  if (aba === 'localizacao') setTimeout(() => initMapaTela(), 30);
+  if (aba === 'localizacao' && f.estado) carregarCidades(f.estado, f.cidade);
+}
+
+function renderTelaAba(aba) {
+  const f = state.telaForm;
+  if (aba === 'info') {
+    return `
+      <div class="form-group">
+        <label class="form-label">Orientação</label>
+        <div class="select-cards">
+          <div class="select-card ${f.orientacao === 'Horizontal' ? 'selected' : ''}" style="cursor:pointer;padding:16px;" onclick="capturarAbaAtual('info'); state.telaForm.orientacao='Horizontal'; abrirTelaFormModal('info')">🖥️ Horizontal</div>
+          <div class="select-card ${f.orientacao === 'Vertical' ? 'selected' : ''}" style="cursor:pointer;padding:16px;" onclick="capturarAbaAtual('info'); state.telaForm.orientacao='Vertical'; abrirTelaFormModal('info')">📱 Vertical</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Imagem</label>
+        ${f.imagem ? `<img src="${f.imagem}" style="max-height:80px;border-radius:8px;display:block;margin-bottom:8px;">` : ''}
+        <label class="upload-box" style="cursor:pointer;display:block;">
+          📤 ${f.imagem ? 'Trocar arquivo...' : 'Escolher arquivo...'}
+          <input type="file" accept="image/*" style="display:none;" onchange="onUploadTelaImagem(this, 'imagem', 'info')">
+        </label>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Nome</label>
+        <input class="form-input" id="telaNome" value="${f.nome}" placeholder="Ex: TV Loja Centro" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Vincular a um grupo (opcional)</label>
+        <select class="form-select" id="telaGrupoId" onchange="state.telaForm.grupo_id = this.value">
+          <option value="">Nenhum</option>
+          ${state.grupos.map(g => `<option value="${g.id}" ${String(f.grupo_id) === String(g.id) ? 'selected' : ''}>${g.nome}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Telefone #1</label>
+          <input class="form-input" id="telaTelefone1" value="${f.telefone1}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Telefone #2</label>
+          <input class="form-input" id="telaTelefone2" value="${f.telefone2}">
+        </div>
+      </div>
+    `;
+  }
+  if (aba === 'localizacao') {
+    return `
+      <div class="map-tela" id="mapTela"></div>
+      <p class="form-hint" style="margin-top:-8px;margin-bottom:14px;">Arraste o pino para definir a localização mais precisa da tela.</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Endereço</label>
+          <input class="form-input" id="telaEndereco" value="${f.endereco}" placeholder="Ex: Avenida Brasil">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Número</label>
+          <input class="form-input" id="telaNumero" value="${f.numero}" placeholder="Nº 123">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Complemento</label>
+        <input class="form-input" id="telaComplemento" value="${f.complemento}">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Bairro</label>
+          <input class="form-input" id="telaBairro" value="${f.bairro}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">CEP</label>
+          <input class="form-input" id="telaCep" value="${f.cep}">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Estado</label>
+          <select class="form-select" id="telaEstado" onchange="state.telaForm.estado = this.value; state.telaForm.cidade=''; carregarCidades(this.value)">
+            <option value="">Selecione</option>
+            ${ESTADOS_BR.map(([sigla, nome]) => `<option value="${sigla}" ${f.estado === sigla ? 'selected' : ''}>${nome}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cidade</label>
+          <select class="form-select" id="telaCidade">
+            <option value="">${f.estado ? 'Carregando...' : 'Selecione o estado primeiro'}</option>
+          </select>
+        </div>
+      </div>
+    `;
+  }
+  if (aba === 'metricas') {
+    return `
+      <div class="form-group">
+        <label class="form-label">Segmento</label>
+        <select class="form-select" id="telaSegmento">
+          <option value="">Selecione</option>
+          ${['Loja', 'Restaurante', 'Academia', 'Farmácia', 'Supermercado', 'Salão de beleza', 'Consultório', 'Outro']
+            .map(s => `<option value="${s}" ${f.segmento === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Horário de funcionamento</label>
+        <div class="form-row">
+          <input class="form-input" type="time" id="telaHoraInicio" value="${f.horario_inicio}">
+          <input class="form-input" type="time" id="telaHoraFim" value="${f.horario_fim}">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Dias da semana</label>
+        <div class="week-selector">
+          ${DIAS_SEMANA_LABELS.map((d, i) => `<div class="day-chip selectable ${f.dias_semana.includes(i) ? 'active' : ''}" onclick="toggleDiaSemanaTela(${i})">${d}</div>`).join('')}
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Fluxo de pessoas</label>
+        <input class="form-input" type="number" min="0" id="telaFluxoPessoas" value="${f.fluxo_pessoas}" placeholder="Quantidade média de pessoas que circulam no local por dia">
+        <p class="form-hint">Quantidade média de pessoas que circulam no local por dia</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Classes sociais</label>
+        <div style="display:flex;gap:8px;">
+          ${['A','B','C','D'].map(c => `<div class="class-chip ${f.classes_sociais.includes(c) ? 'active' : ''}" onclick="toggleClasseSocialTela('${c}')">${c}</div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+  // configuracoes
+  const c = f.config;
+  return `
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Fuso horário</label>
+        <select class="form-select" id="telaFusoHorario">
+          ${FUSOS_BR.map(tz => `<option value="${tz}" ${c.fuso_horario === tz ? 'selected' : ''}>${tz}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Verificar atualizações a cada</label>
+        <select class="form-select" id="telaIntervalo">
+          ${[5,10,15,30,60].map(m => `<option value="${m}" ${Number(c.intervalo_atualizacao) === m ? 'selected' : ''}>${m} minutos</option>`).join('')}
+        </select>
+        <p class="form-hint">Intervalo recorrente que a tela consulta atualizações</p>
+      </div>
+    </div>
+
+    <div class="switch-row">
+      <div>
+        <div class="switch-label">Permitir som</div>
+        <div class="switch-hint">Permite som na reprodução das mídias</div>
+      </div>
+      <label class="switch"><input type="checkbox" ${c.permitir_som ? 'checked' : ''} onchange="toggleConfigTela('permitir_som', this.checked)"><span class="slider"></span></label>
+    </div>
+
+    <div class="switch-row">
+      <div>
+        <div class="switch-label">Personalizar imagem de inicialização</div>
+        <div class="switch-hint">Ative para personalizar a imagem exibida na tela de inicialização/carregamento do aplicativo.</div>
+      </div>
+      <label class="switch"><input type="checkbox" ${c.imagem_inicializacao_ativo ? 'checked' : ''} onchange="toggleConfigTela('imagem_inicializacao_ativo', this.checked)"><span class="slider"></span></label>
+    </div>
+    ${c.imagem_inicializacao_ativo ? `
+      <div class="form-group">
+        <label class="form-label">Imagem de inicialização</label>
+        ${c.imagem_inicializacao ? `<img src="${c.imagem_inicializacao}" style="max-height:80px;border-radius:8px;display:block;margin-bottom:8px;">` : ''}
+        <label class="upload-box" style="cursor:pointer;display:block;">
+          📤 Escolher arquivo...
+          <input type="file" accept="image/*" style="display:none;" onchange="onUploadTelaImagem(this, 'config.imagem_inicializacao', 'configuracoes')">
+        </label>
+      </div>
+    ` : ''}
+
+    <div class="switch-row">
+      <div>
+        <div class="switch-label">Exibir rodapé</div>
+        <div class="switch-hint">Mostra uma faixa com informações no rodapé da tela</div>
+      </div>
+      <label class="switch"><input type="checkbox" ${c.exibir_rodape ? 'checked' : ''} onchange="toggleConfigTela('exibir_rodape', this.checked)"><span class="slider"></span></label>
+    </div>
+    ${c.exibir_rodape ? `
+      <div class="switch-row">
+        <div>
+          <div class="switch-label">Personalizar configuração</div>
+          <div class="switch-hint">Usa a configuração padrão ou define configurações personalizadas</div>
+        </div>
+        <label class="switch"><input type="checkbox" ${c.personalizar_config ? 'checked' : ''} onchange="toggleConfigTela('personalizar_config', this.checked)"><span class="slider"></span></label>
+      </div>
+    ` : ''}
+    ${c.exibir_rodape && c.personalizar_config ? `
+      <div class="form-group">
+        <label class="form-label">Imagem</label>
+        ${c.rodape_imagem ? `<img src="${c.rodape_imagem}" style="max-height:60px;border-radius:8px;display:block;margin-bottom:8px;">` : ''}
+        <label class="upload-box" style="cursor:pointer;display:block;">
+          📤 Escolher arquivo...
+          <input type="file" accept="image/*" style="display:none;" onchange="onUploadTelaImagem(this, 'config.rodape_imagem', 'configuracoes')">
+        </label>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Cor de fundo</label>
+          <input class="form-input" type="color" id="telaRodapeCorFundo" value="${c.rodape_cor_fundo}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cor da fonte</label>
+          <input class="form-input" type="color" id="telaRodapeCorFonte" value="${c.rodape_cor_fonte}">
+        </div>
+      </div>
+      <div class="switch-row">
+        <div class="switch-label">Mensagem</div>
+        <label class="switch"><input type="checkbox" ${c.rodape_mensagem_ativo ? 'checked' : ''} onchange="toggleConfigTela('rodape_mensagem_ativo', this.checked)"><span class="slider"></span></label>
+      </div>
+      ${c.rodape_mensagem_ativo ? `
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Mensagem</label>
+            <input class="form-input" id="telaRodapeMensagem" value="${c.rodape_mensagem}" maxlength="110">
+            <p class="form-hint">Tamanho máximo: 110 caracteres</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Velocidade da mensagem</label>
+            <select class="form-select" id="telaRodapeVelocidade">
+              ${['Lenta','Média','Rápida'].map(v => `<option value="${v}" ${c.rodape_velocidade === v ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      ` : ''}
+      <div class="form-row">
+        <div class="switch-row">
+          <div class="switch-label">Data</div>
+          <label class="switch"><input type="checkbox" ${c.rodape_mostrar_data ? 'checked' : ''} onchange="toggleConfigTela('rodape_mostrar_data', this.checked)"><span class="slider"></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="switch-label">Hora</div>
+          <label class="switch"><input type="checkbox" ${c.rodape_mostrar_hora ? 'checked' : ''} onchange="toggleConfigTela('rodape_mostrar_hora', this.checked)"><span class="slider"></span></label>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="switch-row">
+          <div>
+            <div class="switch-label">Clima</div>
+            <div class="switch-hint">Requer configurar uma chave de previsão do tempo depois</div>
+          </div>
+          <label class="switch"><input type="checkbox" ${c.rodape_mostrar_clima ? 'checked' : ''} onchange="toggleConfigTela('rodape_mostrar_clima', this.checked)"><span class="slider"></span></label>
+        </div>
+        <div class="switch-row">
+          <div class="switch-label">Ícones</div>
+          <label class="switch"><input type="checkbox" ${c.rodape_mostrar_icones ? 'checked' : ''} onchange="toggleConfigTela('rodape_mostrar_icones', this.checked)"><span class="slider"></span></label>
+        </div>
+      </div>
+    ` : ''}
+  `;
+}
+
+function toggleDiaSemanaTela(dia) {
+  capturarAbaAtual('metricas');
+  const f = state.telaForm;
+  f.dias_semana = f.dias_semana.includes(dia) ? f.dias_semana.filter(d => d !== dia) : [...f.dias_semana, dia];
+  $('#telaFormBody').innerHTML = renderTelaAba('metricas');
+}
+
+function toggleClasseSocialTela(c) {
+  capturarAbaAtual('metricas');
+  const f = state.telaForm;
+  f.classes_sociais = f.classes_sociais.includes(c) ? f.classes_sociais.filter(x => x !== c) : [...f.classes_sociais, c];
+  $('#telaFormBody').innerHTML = renderTelaAba('metricas');
+}
+
+function toggleConfigTela(campo, valor) {
+  capturarAbaAtual('configuracoes');
+  state.telaForm.config[campo] = valor;
+  $('#telaFormBody').innerHTML = renderTelaAba('configuracoes');
+}
+
+async function onUploadTelaImagem(inputEl, caminho, aba) {
+  const file = inputEl.files[0];
+  if (!file) return;
+  capturarAbaAtual(aba);
+  const fd = new FormData();
+  fd.append('arquivo', file);
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', credentials: 'include', body: fd });
+    if (!res.ok) throw new Error('Falha no upload');
+    const uploaded = await res.json();
+    setNested(state.telaForm, caminho, uploaded.url);
+    $('#telaFormBody').innerHTML = renderTelaAba(aba);
+    toast('Imagem enviada!');
+  } catch (err) {
+    toast('Erro ao enviar imagem', 'error');
+  }
+}
+
+function initMapaTela() {
+  const el = document.getElementById('mapTela');
+  if (!el || typeof L === 'undefined') return;
+  if (telaMapaInstancia) { telaMapaInstancia.remove(); telaMapaInstancia = null; }
+
+  const f = state.telaForm;
+  const lat = f.latitude || -3.7327, lng = f.longitude || -40.9847; // padrão: Viçosa do Ceará
+  telaMapaInstancia = L.map('mapTela').setView([lat, lng], f.latitude ? 15 : 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors',
+  }).addTo(telaMapaInstancia);
+
+  telaMarcadorInstancia = L.marker([lat, lng], { draggable: true }).addTo(telaMapaInstancia);
+  telaMarcadorInstancia.on('dragend', async () => {
+    const pos = telaMarcadorInstancia.getLatLng();
+    state.telaForm.latitude = pos.lat;
+    state.telaForm.longitude = pos.lng;
+    try {
+      const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${pos.lat}&lon=${pos.lng}`);
+      const dados = await resp.json();
+      const addr = dados.address || {};
+      if (document.getElementById('telaEndereco')) document.getElementById('telaEndereco').value = addr.road || '';
+      if (document.getElementById('telaBairro')) document.getElementById('telaBairro').value = addr.suburb || addr.neighbourhood || '';
+      if (document.getElementById('telaCep')) document.getElementById('telaCep').value = addr.postcode || '';
+    } catch (e) { /* geocoding é best-effort */ }
+  });
+
+  if (!f.latitude) {
+    state.telaForm.latitude = lat;
+    state.telaForm.longitude = lng;
+  }
+}
+
+async function carregarCidades(uf, cidadeSelecionada) {
+  const select = document.getElementById('telaCidade');
+  if (!select) return;
+  if (!uf) { select.innerHTML = '<option value="">Selecione o estado primeiro</option>'; return; }
+  select.innerHTML = '<option value="">Carregando...</option>';
+  try {
+    const resp = await fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios`);
+    const cidades = await resp.json();
+    select.innerHTML = `<option value="">Selecione</option>` +
+      cidades.map(c => `<option value="${c.nome}" ${cidadeSelecionada === c.nome ? 'selected' : ''}>${c.nome}</option>`).join('');
+    select.onchange = () => { state.telaForm.cidade = select.value; };
+  } catch (e) {
+    select.innerHTML = '<option value="">Não foi possível carregar</option>';
+  }
+}
+
+async function salvarTelaForm(abaAtual) {
+  capturarAbaAtual(abaAtual);
+  const f = state.telaForm;
+  if (!f.nome || !f.nome.trim()) { toast('Informe o nome da tela', 'error'); return; }
+
+  const payload = {
+    ...f,
+    localizacao: f.cidade && f.estado ? `${f.cidade} - ${f.estado}` : (f.endereco || ''),
+    grupo_id: f.grupo_id || null,
+  };
+
+  const result = f.id
+    ? await api(`/telas/${f.id}`, { method: 'PUT', body: JSON.stringify(payload) })
+    : await api('/telas', { method: 'POST', body: JSON.stringify(payload) });
+
   if (result) {
-    toast('Tela cadastrada com sucesso!');
+    toast(f.id ? 'Tela atualizada!' : 'Tela cadastrada com sucesso!');
+    if (telaMapaInstancia) { telaMapaInstancia.remove(); telaMapaInstancia = null; }
     closeModal();
     renderTelas();
   }
@@ -467,40 +949,6 @@ async function deleteTela(id) {
   if (!confirm('Deseja realmente excluir esta tela?')) return;
   const result = await api(`/telas/${id}`, { method: 'DELETE' });
   if (result) { toast('Tela removida'); renderTelas(); }
-}
-
-function editTela(id) {
-  const tela = state.telas.find(t => t.id === id);
-  if (!tela) return;
-  openModal(`
-    <div class="modal-header">
-      <h3>Editar Tela</h3>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <form id="formTela">
-        <div class="form-group">
-          <label class="form-label">Nome da tela</label>
-          <input class="form-input" name="nome" value="${tela.nome}" required>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Localização</label>
-          <input class="form-input" name="localizacao" value="${tela.localizacao || ''}">
-        </div>
-      </form>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-primary" onclick="submitEditTela(${id})">Salvar</button>
-    </div>
-  `);
-}
-
-async function submitEditTela(id) {
-  const form = $('#formTela');
-  const data = Object.fromEntries(new FormData(form));
-  const result = await api(`/telas/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-  if (result) { toast('Tela atualizada'); closeModal(); renderTelas(); }
 }
 
 /* ---------------- Campanhas ---------------- */
@@ -586,8 +1034,13 @@ async function deleteCampanha(id) {
 }
 
 /* ---------------- Mídias ---------------- */
+const CATEGORIAS_MIDIA = ['Promoção', 'Institucional', 'Produto', 'Evento', 'Aviso', 'Outro'];
+
 async function renderMidias() {
   state.midias = await api('/midias') || [];
+  state.grupos = await api('/grupos') || [];
+  state.clientes = await api('/clientes') || [];
+  state.telas = await api('/telas') || [];
   $('#topbarActions').innerHTML = `
     <button class="btn btn-secondary" onclick="navigate('grupos')">🗂️ Grupos</button>
     <button class="btn btn-primary" onclick="openNovaMidiaModal()">+ Nova mídia</button>
@@ -595,9 +1048,9 @@ async function renderMidias() {
 
   const rows = state.midias.map(m => `
     <tr>
-      <td><strong>${m.nome}</strong><div class="text-muted" style="font-size:11px;">${tipoLabel(m.tipo)}</div></td>
+      <td><strong>${m.nome}</strong><div class="text-muted" style="font-size:11px;">${tipoLabel(m.tipo)}${m.categoria ? ' · ' + m.categoria : ''}</div></td>
       <td>${midiaQtdTelas(m.id)}</td>
-      <td>${m.orientacao || 'Paisagem'}</td>
+      <td>${m.url_horizontal ? '🖥️' : ''}${m.url_vertical ? '📱' : ''}${!m.url_horizontal && !m.url_vertical ? (m.orientacao || 'Paisagem') : ''}</td>
       <td><span class="status-pill ${m.status === 'ativo' ? 'online' : 'offline'}">${m.status || 'ativo'}</span></td>
       <td>${timeAgo(m.criado_em)}</td>
       <td>
@@ -642,6 +1095,17 @@ function midiaQtdTelas(midiaId) {
   return n || '—';
 }
 
+function midiaFormPadrao() {
+  return {
+    id: null, tipo: 'imagem', nome: '', cliente_id: '', categoria: '',
+    url: '', url_horizontal: '', url_vertical: '',
+    duracao_segundos: 10, gravar_estatisticas: true, status: 'ativo',
+    agenda_inicio: '', agenda_fim: '', agenda_hora_inicio: '', agenda_hora_fim: '',
+    agenda_dias_semana: [0,1,2,3,4,5,6],
+    telas_rapidas: [],
+  };
+}
+
 function openNovaMidiaModal() {
   openModal(`
     <div class="modal-header">
@@ -650,16 +1114,16 @@ function openNovaMidiaModal() {
     </div>
     <div class="modal-body">
       <div class="grid grid-4" style="gap:12px;">
-        <div class="select-card" style="padding:20px 10px;text-align:center;cursor:pointer;" onclick="openMidiaFormModal('imagem')">
+        <div class="select-card" style="padding:20px 10px;text-align:center;cursor:pointer;" onclick="escolherTipoMidia('imagem')">
           <div style="font-size:26px;">🎞️</div>Vídeo/imagem
         </div>
-        <div class="select-card" style="padding:20px 10px;text-align:center;cursor:pointer;" onclick="openMidiaFormModal('youtube')">
+        <div class="select-card" style="padding:20px 10px;text-align:center;cursor:pointer;" onclick="escolherTipoMidia('youtube')">
           <div style="font-size:26px;">▶️</div>Vídeo YouTube
         </div>
-        <div class="select-card" style="padding:20px 10px;text-align:center;cursor:pointer;" onclick="openMidiaFormModal('link')">
+        <div class="select-card" style="padding:20px 10px;text-align:center;cursor:pointer;" onclick="escolherTipoMidia('link')">
           <div style="font-size:26px;">🔗</div>Link externo
         </div>
-        <div class="select-card" style="padding:20px 10px;text-align:center;cursor:pointer;" onclick="openMidiaFormModal('programatica')">
+        <div class="select-card" style="padding:20px 10px;text-align:center;cursor:pointer;" onclick="escolherTipoMidia('programatica')">
           <div style="font-size:26px;">📡</div>Mídia programática
         </div>
       </div>
@@ -667,133 +1131,264 @@ function openNovaMidiaModal() {
   `);
 }
 
-function openMidiaFormModal(tipo) {
-  const labels = {
-    imagem: { titulo: 'Vídeo/imagem' },
-    youtube: { titulo: 'Vídeo YouTube', urlLabel: 'URL do vídeo', urlPlaceholder: 'https://youtube.com/watch?v=...' },
-    link: { titulo: 'Link externo', urlLabel: 'URL', urlPlaceholder: 'https://exemplo.com' },
-    programatica: { titulo: 'Mídia programática', urlLabel: 'Tag / URL do parceiro', urlPlaceholder: 'https://...' },
-  }[tipo];
-  const isUpload = tipo === 'imagem';
-
-  openModal(`
-    <div class="modal-header">
-      <h3>Nova mídia — ${labels.titulo}</h3>
-      <button class="modal-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <form id="formMidia">
-        <input type="hidden" name="tipo" value="${tipo}">
-        <div class="form-group">
-          <label class="form-label">Nome</label>
-          <input class="form-input" name="nome" placeholder="Ex: Promoção de verão" required>
-        </div>
-        ${isUpload ? `
-          <div class="form-group">
-            <label class="form-label">Arquivo (imagem ou vídeo)</label>
-            <input class="form-input" name="arquivo" type="file" accept="image/*,video/*" required>
-            <p class="form-hint">Selecione o arquivo do seu computador. Tamanho máximo: 200MB.</p>
-          </div>
-        ` : `
-          <div class="form-group">
-            <label class="form-label">${labels.urlLabel}</label>
-            <input class="form-input" name="url" placeholder="${labels.urlPlaceholder}" required>
-          </div>
-        `}
-        <div class="form-group">
-          <label class="form-label">Orientação</label>
-          <select class="form-select" name="orientacao">
-            <option value="Paisagem">Paisagem</option>
-            <option value="Retrato">Retrato</option>
-          </select>
-        </div>
-      </form>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="openNovaMidiaModal()">← Voltar</button>
-      <button class="btn btn-primary" id="btnSalvarMidia" onclick="submitMidia()">Salvar mídia</button>
-    </div>
-  `);
-}
-
-async function submitMidia() {
-  const form = $('#formMidia');
-  const btn = $('#btnSalvarMidia');
-  const fileInput = form.querySelector('input[name="arquivo"]');
-  const data = Object.fromEntries(new FormData(form));
-
-  if (fileInput) {
-    const file = fileInput.files[0];
-    if (!file) { toast('Selecione um arquivo', 'error'); return; }
-    btn.disabled = true;
-    btn.textContent = 'Enviando...';
-    const fd = new FormData();
-    fd.append('arquivo', file);
-    try {
-      const res = await fetch('/api/upload', { method: 'POST', credentials: 'include', body: fd });
-      if (!res.ok) throw new Error('Falha no upload');
-      const uploaded = await res.json();
-      data.url = uploaded.url;
-    } catch (err) {
-      toast('Erro ao enviar o arquivo', 'error');
-      btn.disabled = false;
-      btn.textContent = 'Salvar mídia';
-      return;
-    }
-    delete data.arquivo;
-  }
-
-  const result = await api('/midias', { method: 'POST', body: JSON.stringify(data) });
-  if (result) { toast('Mídia cadastrada!'); closeModal(); renderMidias(); }
-  else if (btn) { btn.disabled = false; btn.textContent = 'Salvar mídia'; }
+function escolherTipoMidia(tipo) {
+  state.midiaForm = midiaFormPadrao();
+  state.midiaForm.tipo = tipo;
+  abrirMidiaFormModal('info');
 }
 
 function editMidia(id) {
   const m = state.midias.find(x => x.id === id);
   if (!m) return;
+  const grupoRapido = state.grupos.find(g => g.midia_auto_id === id);
+  state.midiaForm = {
+    id: m.id, tipo: m.tipo || 'imagem', nome: m.nome || '',
+    cliente_id: m.cliente_id || '', categoria: m.categoria || '',
+    url: m.url || '', url_horizontal: m.url_horizontal || '', url_vertical: m.url_vertical || '',
+    duracao_segundos: m.duracao_segundos || 10,
+    gravar_estatisticas: m.gravar_estatisticas !== 0,
+    status: m.status || 'ativo',
+    agenda_inicio: m.agenda_inicio || '', agenda_fim: m.agenda_fim || '',
+    agenda_hora_inicio: m.agenda_hora_inicio || '', agenda_hora_fim: m.agenda_hora_fim || '',
+    agenda_dias_semana: (m.agenda_dias_semana || '0,1,2,3,4,5,6').split(',').filter(Boolean).map(Number),
+    telas_rapidas: grupoRapido ? JSON.parse(grupoRapido.telas_ids || '[]') : [],
+  };
+  abrirMidiaFormModal('info');
+}
+
+const MIDIA_TITULOS = {
+  imagem: 'Vídeo/imagem', youtube: 'Vídeo YouTube', link: 'Link externo', programatica: 'Mídia programática',
+};
+
+function capturarAbaMidia(aba) {
+  const f = state.midiaForm;
+  if (aba === 'info') {
+    f.nome = document.getElementById('midiaNome')?.value ?? f.nome;
+    f.cliente_id = document.getElementById('midiaCliente')?.value ?? f.cliente_id;
+    f.categoria = document.getElementById('midiaCategoria')?.value ?? f.categoria;
+    f.url = document.getElementById('midiaUrl')?.value ?? f.url;
+    f.duracao_segundos = document.getElementById('midiaDuracao')?.value ?? f.duracao_segundos;
+  } else if (aba === 'agendamento') {
+    f.agenda_inicio = document.getElementById('midiaAgendaInicio')?.value ?? f.agenda_inicio;
+    f.agenda_fim = document.getElementById('midiaAgendaFim')?.value ?? f.agenda_fim;
+    f.agenda_hora_inicio = document.getElementById('midiaAgendaHoraInicio')?.value ?? f.agenda_hora_inicio;
+    f.agenda_hora_fim = document.getElementById('midiaAgendaHoraFim')?.value ?? f.agenda_hora_fim;
+  }
+}
+
+function mudarAbaMidia(abaAtual, novaAba) {
+  capturarAbaMidia(abaAtual);
+  abrirMidiaFormModal(novaAba);
+}
+
+function abrirMidiaFormModal(aba) {
+  const f = state.midiaForm;
+  const abas = [['info', 'ⓘ Info'], ['agendamento', '📅 Agendamento'], ['rapida', '🚀 Inclusão rápida']];
+
   openModal(`
     <div class="modal-header">
-      <h3>Editar mídia</h3>
+      <h3>${f.id ? 'Editar' : 'Nova'} mídia — ${MIDIA_TITULOS[f.tipo]}</h3>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
-    <div class="modal-body">
-      <form id="formMidiaEdit">
-        <div class="form-group">
-          <label class="form-label">Nome</label>
-          <input class="form-input" name="nome" value="${m.nome}" required>
-        </div>
-        <div class="form-group">
-          <label class="form-label">URL</label>
-          <input class="form-input" name="url" value="${m.url || ''}">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Orientação</label>
-          <select class="form-select" name="orientacao">
-            <option value="Paisagem" ${m.orientacao !== 'Retrato' ? 'selected' : ''}>Paisagem</option>
-            <option value="Retrato" ${m.orientacao === 'Retrato' ? 'selected' : ''}>Retrato</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Status</label>
-          <select class="form-select" name="status">
-            <option value="ativo" ${m.status !== 'inativo' ? 'selected' : ''}>Ativo</option>
-            <option value="inativo" ${m.status === 'inativo' ? 'selected' : ''}>Inativo</option>
-          </select>
-        </div>
-      </form>
+    <div class="modal-tabs">
+      ${abas.map(([key, label]) => `<div class="modal-tab ${aba === key ? 'active' : ''}" onclick="mudarAbaMidia('${aba}', '${key}')">${label}</div>`).join('')}
     </div>
+    <div class="modal-body" id="midiaFormBody">${renderMidiaAba(aba)}</div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-primary" onclick="submitEditMidia(${id})">Salvar</button>
+      <button class="btn btn-primary" onclick="salvarMidiaForm('${aba}')">💾 Salvar</button>
     </div>
   `);
 }
 
-async function submitEditMidia(id) {
-  const form = $('#formMidiaEdit');
-  const data = Object.fromEntries(new FormData(form));
-  const result = await api(`/midias/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-  if (result) { toast('Mídia atualizada!'); closeModal(); renderMidias(); }
+function renderMidiaAba(aba) {
+  const f = state.midiaForm;
+  const isUpload = f.tipo === 'imagem';
+
+  if (aba === 'info') {
+    return `
+      <div class="form-group">
+        <label class="form-label">Nome</label>
+        <input class="form-input" id="midiaNome" value="${f.nome}" placeholder="Ex: Promoção de verão" required>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Cliente</label>
+          <select class="form-select" id="midiaCliente">
+            <option value="">Nenhum</option>
+            ${state.clientes.map(c => `<option value="${c.id}" ${String(f.cliente_id) === String(c.id) ? 'selected' : ''}>${c.nome}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Categoria</label>
+          <select class="form-select" id="midiaCategoria">
+            <option value="">Selecione</option>
+            ${CATEGORIAS_MIDIA.map(c => `<option value="${c}" ${f.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      ${isUpload ? `
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Arquivo horizontal</label>
+            ${f.url_horizontal ? `<p class="text-muted" style="font-size:12px;">✅ Enviado</p>` : ''}
+            <label class="upload-box" style="cursor:pointer;display:block;">
+              📤 Clique para escolher ou arraste um arquivo aqui
+              <div class="form-hint">Aceita: image/*, video/*</div>
+              <input type="file" accept="image/*,video/*" style="display:none;" onchange="onUploadMidiaArquivo(this, 'url_horizontal')">
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Arquivo vertical</label>
+            ${f.url_vertical ? `<p class="text-muted" style="font-size:12px;">✅ Enviado</p>` : ''}
+            <label class="upload-box" style="cursor:pointer;display:block;">
+              📤 Clique para escolher ou arraste um arquivo aqui
+              <div class="form-hint">Aceita: image/*, video/*</div>
+              <input type="file" accept="image/*,video/*" style="display:none;" onchange="onUploadMidiaArquivo(this, 'url_vertical')">
+            </label>
+          </div>
+        </div>
+        <p class="form-hint">Envie o mesmo conteúdo nas duas orientações se você tiver telas horizontais e verticais. Pode enviar só uma se só usar um tipo de tela.</p>
+      ` : `
+        <div class="form-group">
+          <label class="form-label">${f.tipo === 'youtube' ? 'URL do vídeo' : f.tipo === 'link' ? 'URL' : 'Tag / URL do parceiro'}</label>
+          <input class="form-input" id="midiaUrl" value="${f.url}" placeholder="https://...">
+        </div>
+      `}
+      <div class="form-group">
+        <label class="form-label">Duração${isUpload ? ' (imagens)' : ''}</label>
+        <input class="form-input" type="number" min="1" id="midiaDuracao" value="${f.duracao_segundos}">
+        <p class="form-hint">em segundos</p>
+      </div>
+      <div class="switch-row">
+        <div>
+          <div class="switch-label">Gravar estatísticas</div>
+          <div class="switch-hint">Caso marcado, irá contabilizar estatística de reprodução</div>
+        </div>
+        <label class="switch"><input type="checkbox" ${f.gravar_estatisticas ? 'checked' : ''} onchange="state.midiaForm.gravar_estatisticas = this.checked"><span class="slider"></span></label>
+      </div>
+    `;
+  }
+
+  if (aba === 'agendamento') {
+    return `
+      <p class="form-hint" style="margin-top:0;">Programe a reprodução dessa mídia em horários ou dias específicos, de acordo com sua estratégia. Deixe em branco caso não queira aplicar nenhuma regra.</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Iniciar em</label>
+          <input class="form-input" type="date" id="midiaAgendaInicio" value="${f.agenda_inicio}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Parar em</label>
+          <input class="form-input" type="date" id="midiaAgendaFim" value="${f.agenda_fim}">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Faixa de horário</label>
+        <div class="form-row">
+          <input class="form-input" type="time" id="midiaAgendaHoraInicio" value="${f.agenda_hora_inicio}">
+          <input class="form-input" type="time" id="midiaAgendaHoraFim" value="${f.agenda_hora_fim}">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Programação semanal</label>
+        <div class="week-selector">
+          ${DIAS_SEMANA_LABELS.map((d, i) => `<div class="day-chip selectable ${f.agenda_dias_semana.includes(i) ? 'active' : ''}" onclick="toggleDiaSemanaMidia(${i})">${d}</div>`).join('')}
+        </div>
+        <p class="form-hint">Caso não informado, será exibida em todos os dias da semana</p>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="limparAgendaMidia()">🧹 Limpar valores</button>
+    `;
+  }
+
+  // rapida
+  const q = (state.buscaTelaRapida || '').toLowerCase();
+  const telasFiltradas = state.telas.filter(t => t.nome.toLowerCase().includes(q));
+  return `
+    <div style="font-weight:600;margin-bottom:6px;">🚀 Inclusão rápida</div>
+    <p class="text-muted" style="font-size:12px;">Quer economizar tempo? Use esta opção pra incluir essa mídia em várias telas de uma vez só, sem precisar ir em "Vincular telas" depois. A mídia sempre irá para o final da playlist.</p>
+    <div class="form-group">
+      <label class="form-label">Telas disponíveis</label>
+      <input class="form-input" placeholder="Busque pelo nome da tela..." oninput="state.buscaTelaRapida=this.value; $('#listaTelasRapida').innerHTML = renderListaTelasRapida();">
+    </div>
+    <div id="listaTelasRapida" style="max-height:200px;overflow-y:auto;">${renderListaTelasRapida()}</div>
+    <p class="form-hint">O conteúdo só será adicionado à tela de mesma orientação</p>
+  `;
+}
+
+function renderListaTelasRapida() {
+  const q = (state.buscaTelaRapida || '').toLowerCase();
+  const f = state.midiaForm;
+  return (state.telas || []).filter(t => t.nome.toLowerCase().includes(q)).map(t => `
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;">
+      <input type="checkbox" ${f.telas_rapidas.includes(t.id) ? 'checked' : ''} onchange="toggleTelaRapidaMidia(${t.id})">
+      ${t.nome} <span class="text-muted" style="font-size:11px;">(${t.orientacao || 'Horizontal'})</span>
+    </label>
+  `).join('') || '<p class="text-muted" style="font-size:12px;">Nenhuma tela cadastrada ainda.</p>';
+}
+
+function toggleTelaRapidaMidia(id) {
+  const f = state.midiaForm;
+  f.telas_rapidas = f.telas_rapidas.includes(id) ? f.telas_rapidas.filter(x => x !== id) : [...f.telas_rapidas, id];
+  $('#listaTelasRapida').innerHTML = renderListaTelasRapida();
+}
+
+function toggleDiaSemanaMidia(dia) {
+  capturarAbaMidia('agendamento');
+  const f = state.midiaForm;
+  f.agenda_dias_semana = f.agenda_dias_semana.includes(dia) ? f.agenda_dias_semana.filter(d => d !== dia) : [...f.agenda_dias_semana, dia];
+  $('#midiaFormBody').innerHTML = renderMidiaAba('agendamento');
+}
+
+function limparAgendaMidia() {
+  const f = state.midiaForm;
+  f.agenda_inicio = ''; f.agenda_fim = ''; f.agenda_hora_inicio = ''; f.agenda_hora_fim = '';
+  f.agenda_dias_semana = [0,1,2,3,4,5,6];
+  $('#midiaFormBody').innerHTML = renderMidiaAba('agendamento');
+}
+
+async function onUploadMidiaArquivo(inputEl, campo) {
+  const file = inputEl.files[0];
+  if (!file) return;
+  capturarAbaMidia('info');
+  const fd = new FormData();
+  fd.append('arquivo', file);
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', credentials: 'include', body: fd });
+    if (!res.ok) throw new Error('Falha no upload');
+    const uploaded = await res.json();
+    state.midiaForm[campo] = uploaded.url;
+    $('#midiaFormBody').innerHTML = renderMidiaAba('info');
+    toast('Arquivo enviado!');
+  } catch (err) {
+    toast('Erro ao enviar o arquivo', 'error');
+  }
+}
+
+async function salvarMidiaForm(abaAtual) {
+  capturarAbaMidia(abaAtual);
+  const f = state.midiaForm;
+  if (!f.nome || !f.nome.trim()) { toast('Informe o nome da mídia', 'error'); return; }
+  if (f.tipo === 'imagem' && !f.url_horizontal && !f.url_vertical) {
+    toast('Envie ao menos um arquivo (horizontal ou vertical)', 'error');
+    return;
+  }
+  if (f.tipo !== 'imagem' && !f.url) {
+    toast('Informe a URL da mídia', 'error');
+    return;
+  }
+
+  const payload = { ...f, cliente_id: f.cliente_id || null };
+
+  const result = f.id
+    ? await api(`/midias/${f.id}`, { method: 'PUT', body: JSON.stringify(payload) })
+    : await api('/midias', { method: 'POST', body: JSON.stringify(payload) });
+
+  if (result) {
+    toast(f.id ? 'Mídia atualizada!' : 'Mídia cadastrada!');
+    closeModal();
+    renderMidias();
+  }
 }
 
 async function deleteMidia(id) {
@@ -848,77 +1443,137 @@ async function renderGrupos() {
   `;
 }
 
+function grupoFormPadrao() {
+  return { id: null, nome: '', imagem: null, midias_ids: [], telas_ids: [] };
+}
+
 function openNovoGrupoModal(grupoId = null) {
   const grupo = grupoId ? state.grupos.find(g => g.id === grupoId) : null;
-  const selMidias = grupo ? JSON.parse(grupo.midias_ids || '[]') : [];
-  const selTelas = grupo ? JSON.parse(grupo.telas_ids || '[]') : [];
+  state.grupoForm = grupo
+    ? { id: grupo.id, nome: grupo.nome, imagem: grupo.imagem || null,
+        midias_ids: JSON.parse(grupo.midias_ids || '[]'), telas_ids: JSON.parse(grupo.telas_ids || '[]') }
+    : grupoFormPadrao();
+  state.buscaMidiaGrupo = '';
+  state.buscaTelaGrupo = '';
+  renderGrupoFormModal();
+}
 
+function renderGrupoFormModal() {
+  const f = state.grupoForm;
   openModal(`
     <div class="modal-header">
-      <h3>${grupo ? 'Editar vínculo' : 'Vincular mídias a telas'}</h3>
+      <h3>${f.id ? 'Editar vínculo' : 'Vincular mídias a telas'}</h3>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
-      <form id="formGrupo">
-        <input type="hidden" name="id" value="${grupo ? grupo.id : ''}">
-        <div class="form-group">
-          <label class="form-label">Nome do vínculo</label>
-          <input class="form-input" name="nome" placeholder="Ex: Promoção de verão" value="${grupo ? grupo.nome : ''}" required>
+      <div class="form-group">
+        <label class="form-label">Imagem</label>
+        ${f.imagem ? `<img src="${f.imagem}" style="max-height:70px;border-radius:8px;display:block;margin-bottom:8px;">` : ''}
+        <label class="upload-box" style="cursor:pointer;display:block;">
+          📤 ${f.imagem ? 'Trocar arquivo...' : 'Escolher arquivo...'}
+          <input type="file" accept="image/*" style="display:none;" onchange="onUploadGrupoImagem(this)">
+        </label>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Nome do vínculo</label>
+        <input class="form-input" id="grupoNome" placeholder="Ex: Promoção de verão" value="${f.nome}" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Mídias</label>
+        <input class="form-input" placeholder="Busque pelo nome da mídia..." style="margin-bottom:8px;"
+          oninput="state.buscaMidiaGrupo=this.value; $('#listaMidiasGrupo').innerHTML = renderListaMidiasGrupo();">
+        <div id="listaMidiasGrupo" style="max-height:160px;overflow-y:auto;border:1px solid var(--border,#333);border-radius:8px;padding:8px;">
+          ${renderListaMidiasGrupo()}
         </div>
-        <div class="form-group">
-          <label class="form-label">Mídias</label>
-          ${state.midias.length === 0 ? '<p class="text-muted" style="font-size:12px;">Nenhuma mídia cadastrada ainda.</p>' : `
-            <div style="max-height:160px;overflow-y:auto;border:1px solid var(--border,#333);border-radius:8px;padding:8px;">
-              ${state.midias.map(m => `
-                <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">
-                  <input type="checkbox" name="midia_check" value="${m.id}" ${selMidias.includes(m.id) ? 'checked' : ''}>
-                  ${m.nome} <span class="text-muted" style="font-size:11px;">(${tipoLabel(m.tipo)})</span>
-                </label>
-              `).join('')}
-            </div>
-          `}
+        <p class="form-hint">O conteúdo só será reproduzido na tela de mesma orientação</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Telas</label>
+        <input class="form-input" placeholder="Busque pelo nome da tela..." style="margin-bottom:8px;"
+          oninput="state.buscaTelaGrupo=this.value; $('#listaTelasGrupo').innerHTML = renderListaTelasGrupo();">
+        <div id="listaTelasGrupo" style="max-height:160px;overflow-y:auto;border:1px solid var(--border,#333);border-radius:8px;padding:8px;">
+          ${renderListaTelasGrupo()}
         </div>
-        <div class="form-group">
-          <label class="form-label">Telas</label>
-          ${state.telas.length === 0 ? '<p class="text-muted" style="font-size:12px;">Nenhuma tela cadastrada ainda.</p>' : `
-            <div style="max-height:160px;overflow-y:auto;border:1px solid var(--border,#333);border-radius:8px;padding:8px;">
-              ${state.telas.map(t => `
-                <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">
-                  <input type="checkbox" name="tela_check" value="${t.id}" ${selTelas.includes(t.id) ? 'checked' : ''}>
-                  ${t.nome} <span class="text-muted" style="font-size:11px;">(ID: ${t.id})</span>
-                </label>
-              `).join('')}
-            </div>
-          `}
-        </div>
-      </form>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-primary" onclick="submitGrupo()">💾 Salvar</button>
+      <button class="btn btn-primary" onclick="salvarGrupoForm()">💾 Salvar</button>
     </div>
   `);
+}
+
+function renderListaMidiasGrupo() {
+  const q = (state.buscaMidiaGrupo || '').toLowerCase();
+  const f = state.grupoForm;
+  const lista = state.midias.filter(m => m.nome.toLowerCase().includes(q));
+  if (!lista.length) return '<p class="text-muted" style="font-size:12px;">Nenhuma mídia encontrada.</p>';
+  return lista.map(m => `
+    <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">
+      <input type="checkbox" ${f.midias_ids.includes(m.id) ? 'checked' : ''} onchange="toggleMidiaGrupo(${m.id})">
+      ${m.nome} <span class="text-muted" style="font-size:11px;">(${tipoLabel(m.tipo)})</span>
+    </label>
+  `).join('');
+}
+
+function renderListaTelasGrupo() {
+  const q = (state.buscaTelaGrupo || '').toLowerCase();
+  const f = state.grupoForm;
+  const lista = state.telas.filter(t => t.nome.toLowerCase().includes(q));
+  if (!lista.length) return '<p class="text-muted" style="font-size:12px;">Nenhuma tela encontrada.</p>';
+  return lista.map(t => `
+    <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">
+      <input type="checkbox" ${f.telas_ids.includes(t.id) ? 'checked' : ''} onchange="toggleTelaGrupo(${t.id})">
+      ${t.nome} <span class="text-muted" style="font-size:11px;">(ID: ${t.id})</span>
+    </label>
+  `).join('');
+}
+
+function toggleMidiaGrupo(id) {
+  const f = state.grupoForm;
+  f.midias_ids = f.midias_ids.includes(id) ? f.midias_ids.filter(x => x !== id) : [...f.midias_ids, id];
+  $('#listaMidiasGrupo').innerHTML = renderListaMidiasGrupo();
+}
+
+function toggleTelaGrupo(id) {
+  const f = state.grupoForm;
+  f.telas_ids = f.telas_ids.includes(id) ? f.telas_ids.filter(x => x !== id) : [...f.telas_ids, id];
+  $('#listaTelasGrupo').innerHTML = renderListaTelasGrupo();
+}
+
+async function onUploadGrupoImagem(inputEl) {
+  const file = inputEl.files[0];
+  if (!file) return;
+  state.grupoForm.nome = document.getElementById('grupoNome')?.value ?? state.grupoForm.nome;
+  const fd = new FormData();
+  fd.append('arquivo', file);
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', credentials: 'include', body: fd });
+    if (!res.ok) throw new Error('Falha no upload');
+    const uploaded = await res.json();
+    state.grupoForm.imagem = uploaded.url;
+    renderGrupoFormModal();
+    toast('Imagem enviada!');
+  } catch (err) {
+    toast('Erro ao enviar imagem', 'error');
+  }
 }
 
 function editGrupo(id) {
   openNovoGrupoModal(id);
 }
 
-async function submitGrupo() {
-  const form = $('#formGrupo');
-  const nome = form.nome.value.trim();
-  if (!nome) { toast('Informe o nome do vínculo', 'error'); return; }
+async function salvarGrupoForm() {
+  const f = state.grupoForm;
+  f.nome = document.getElementById('grupoNome')?.value.trim() ?? f.nome;
+  if (!f.nome) { toast('Informe o nome do vínculo', 'error'); return; }
 
-  const midias_ids = $all('input[name="midia_check"]:checked').map(el => Number(el.value));
-  const telas_ids = $all('input[name="tela_check"]:checked').map(el => Number(el.value));
-  const id = form.id.value;
-
-  const payload = { nome, midias_ids, telas_ids };
-  const result = id
-    ? await api(`/grupos/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+  const payload = { nome: f.nome, imagem: f.imagem, midias_ids: f.midias_ids, telas_ids: f.telas_ids };
+  const result = f.id
+    ? await api(`/grupos/${f.id}`, { method: 'PUT', body: JSON.stringify(payload) })
     : await api('/grupos', { method: 'POST', body: JSON.stringify(payload) });
 
-  if (result) { toast(id ? 'Vínculo atualizado!' : 'Vínculo criado!'); closeModal(); renderGrupos(); }
+  if (result) { toast(f.id ? 'Vínculo atualizado!' : 'Vínculo criado!'); closeModal(); renderGrupos(); }
 }
 
 async function deleteGrupo(id) {

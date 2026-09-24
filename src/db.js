@@ -119,4 +119,58 @@ if (!midiaCols.includes('grupo_id')) db.exec(`ALTER TABLE midias ADD COLUMN grup
 const campanhaCols = db.prepare(`PRAGMA table_info(campanhas)`).all().map(c => c.name);
 if (!campanhaCols.includes('telas_ids')) db.exec(`ALTER TABLE campanhas ADD COLUMN telas_ids TEXT DEFAULT '[]'`);
 
+/* Migração leve: cadastro completo de telas (tipo de dispositivo, localização no mapa,
+   métricas do ponto e configurações de reprodução/rodapé) */
+const telaCols = db.prepare(`PRAGMA table_info(telas)`).all().map(c => c.name);
+const telaColsNovas = {
+  tipo_dispositivo: `TEXT DEFAULT 'tv_monitor_tablet'`,
+  imagem: `TEXT`,
+  telefone1: `TEXT`,
+  telefone2: `TEXT`,
+  endereco: `TEXT`,
+  numero: `TEXT`,
+  complemento: `TEXT`,
+  bairro: `TEXT`,
+  cep: `TEXT`,
+  estado: `TEXT`,
+  cidade: `TEXT`,
+  latitude: `REAL`,
+  longitude: `REAL`,
+  segmento: `TEXT`,
+  horario_inicio: `TEXT`,
+  horario_fim: `TEXT`,
+  dias_semana: `TEXT DEFAULT '0,1,2,3,4,5,6'`,
+  fluxo_pessoas: `INTEGER`,
+  classes_sociais: `TEXT DEFAULT '[]'`,
+  config: `TEXT DEFAULT '{}'`,
+};
+Object.entries(telaColsNovas).forEach(([col, ddl]) => {
+  if (!telaCols.includes(col)) db.exec(`ALTER TABLE telas ADD COLUMN ${col} ${ddl}`);
+});
+
+/* Migração leve: mídias completas (cliente, categoria, arquivo por orientação,
+   duração, estatísticas e agendamento) */
+const midiaColsNovas = {
+  cliente_id: `INTEGER`,
+  categoria: `TEXT`,
+  url_horizontal: `TEXT`,
+  url_vertical: `TEXT`,
+  duracao_segundos: `INTEGER DEFAULT 10`,
+  gravar_estatisticas: `INTEGER DEFAULT 1`,
+  agenda_inicio: `TEXT`,
+  agenda_fim: `TEXT`,
+  agenda_hora_inicio: `TEXT`,
+  agenda_hora_fim: `TEXT`,
+  agenda_dias_semana: `TEXT DEFAULT '0,1,2,3,4,5,6'`,
+};
+const midiaColsAtuais = db.prepare(`PRAGMA table_info(midias)`).all().map(c => c.name);
+Object.entries(midiaColsNovas).forEach(([col, ddl]) => {
+  if (!midiaColsAtuais.includes(col)) db.exec(`ALTER TABLE midias ADD COLUMN ${col} ${ddl}`);
+});
+
+/* Migração leve: marca grupos criados pela "Inclusão rápida" dentro de Nova mídia,
+   pra poder atualizar em vez de duplicar a cada edição */
+const grupoCols = db.prepare(`PRAGMA table_info(grupos)`).all().map(c => c.name);
+if (!grupoCols.includes('midia_auto_id')) db.exec(`ALTER TABLE grupos ADD COLUMN midia_auto_id INTEGER`);
+
 module.exports = db;

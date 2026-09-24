@@ -155,27 +155,53 @@ app.get('/api/telas', requireApiAuth, (req, res) => {
   res.json(db.prepare(`SELECT * FROM telas ORDER BY criado_em DESC`).all());
 });
 
-app.post('/api/telas', requireApiAuth, (req, res) => {
-  const { nome, localizacao, orientacao, grupo_id } = req.body;
-  if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+/* Campos do cadastro completo de tela (Info, Localização, Métricas, Configurações) */
+const TELA_CAMPOS = [
+  'nome', 'localizacao', 'orientacao', 'grupo_id', 'tipo_dispositivo', 'imagem',
+  'telefone1', 'telefone2',
+  'endereco', 'numero', 'complemento', 'bairro', 'cep', 'estado', 'cidade', 'latitude', 'longitude',
+  'segmento', 'horario_inicio', 'horario_fim', 'dias_semana', 'fluxo_pessoas', 'classes_sociais',
+  'config',
+];
 
-  const stmt = db.prepare(`INSERT INTO telas (nome, localizacao, orientacao, grupo_id) VALUES (?, ?, ?, ?)`);
-  const result = stmt.run(nome, localizacao || null, orientacao || 'Horizontal', grupo_id || null);
+function normalizarTelaBody(body) {
+  const out = {};
+  for (const campo of TELA_CAMPOS) {
+    if (!(campo in body)) continue;
+    let v = body[campo];
+    if (campo === 'dias_semana' && Array.isArray(v)) v = v.join(',');
+    if (campo === 'classes_sociais' && Array.isArray(v)) v = JSON.stringify(v);
+    if (campo === 'config' && typeof v === 'object' && v !== null) v = JSON.stringify(v);
+    out[campo] = v;
+  }
+  return out;
+}
+
+app.post('/api/telas', requireApiAuth, (req, res) => {
+  const dados = normalizarTelaBody(req.body);
+  if (!dados.nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+
+  const campos = Object.keys(dados);
+  const stmt = db.prepare(
+    `INSERT INTO telas (${campos.join(', ')}) VALUES (${campos.map(() => '?').join(', ')})`
+  );
+  const result = stmt.run(...campos.map(c => dados[c] ?? null));
   res.status(201).json(db.prepare(`SELECT * FROM telas WHERE id = ?`).get(result.lastInsertRowid));
 });
 
 app.put('/api/telas/:id', requireApiAuth, (req, res) => {
-  const { nome, localizacao, orientacao, status } = req.body;
   const existing = db.prepare(`SELECT * FROM telas WHERE id = ?`).get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Tela não encontrada' });
 
-  db.prepare(`UPDATE telas SET nome = ?, localizacao = ?, orientacao = ?, status = ? WHERE id = ?`).run(
-    nome ?? existing.nome,
-    localizacao ?? existing.localizacao,
-    orientacao ?? existing.orientacao,
-    status ?? existing.status,
-    req.params.id
-  );
+  const dados = normalizarTelaBody(req.body);
+  if ('status' in req.body) dados.status = req.body.status;
+  const campos = Object.keys(dados);
+  if (campos.length) {
+    db.prepare(`UPDATE telas SET ${campos.map(c => `${c} = ?`).join(', ')} WHERE id = ?`).run(
+      ...campos.map(c => dados[c] ?? null),
+      req.params.id
+    );
+  }
   res.json(db.prepare(`SELECT * FROM telas WHERE id = ?`).get(req.params.id));
 });
 
@@ -235,32 +261,85 @@ app.get('/api/midias', requireApiAuth, (req, res) => {
   res.json(db.prepare(`SELECT * FROM midias ORDER BY criado_em DESC`).all());
 });
 
-app.post('/api/midias', requireApiAuth, (req, res) => {
-  const { nome, tipo, url, campanha_id, orientacao } = req.body;
-  if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+const MIDIA_CAMPOS = [
+  'nome', 'tipo', 'url', 'campanha_id', 'orientacao',
+  'cliente_id', 'categoria', 'url_horizontal', 'url_vertical',
+  'duracao_segundos', 'gravar_estatisticas',
+  'agenda_inicio', 'agenda_fim', 'agenda_hora_inicio', 'agenda_hora_fim', 'agenda_dias_semana',
+  'status',
+];
 
-  const stmt = db.prepare(`INSERT INTO midias (nome, tipo, url, campanha_id, orientacao) VALUES (?, ?, ?, ?, ?)`);
-  const result = stmt.run(nome, tipo || null, url || null, campanha_id || null, orientacao || 'Paisagem');
-  res.status(201).json(db.prepare(`SELECT * FROM midias WHERE id = ?`).get(result.lastInsertRowid));
+function normalizarMidiaBody(body) {
+  const out = {};
+  for (const campo of MIDIA_CAMPOS) {
+    if (!(campo in body)) continue;
+    let v = body[campo];
+    if (campo === 'agenda_dias_semana' && Array.isArray(v)) v = v.join(',');
+    if (campo === 'gravar_estatisticas') v = v ? 1 : 0;
+    out[campo] = v;
+  }
+  return out;
+}
+
+/* Cria/atualiza o grupo "Inclusão rápida" gerado a partir do formulário de mídia,
+   vinculando essa mídia às telas escolhidas ali sem precisar ir em "Vincular telas". */
+function aplicarInclusaoRapida(midiaId, nomeMidia, telasIds) {
+  const existente = db.prepare(`SELECT * FROM grupos WHERE midia_auto_id = ?`).get(midiaId);
+  const telasIdsValidas = Array.isArray(telasIds) ? telasIds.map(Number).filter(Boolean) : [];
+  if (!telasIdsValidas.length) {
+    if (existente) db.prepare(`DELETE FROM grupos WHERE id = ?`).run(existente.id);
+    return;
+  }
+  const nome = `Inclusão rápida — ${nomeMidia}`;
+  if (existente) {
+    db.prepare(`UPDATE grupos SET nome = ?, midias_ids = ?, telas_ids = ? WHERE id = ?`).run(
+      nome, JSON.stringify([midiaId]), JSON.stringify(telasIdsValidas), existente.id
+    );
+  } else {
+    db.prepare(`INSERT INTO grupos (nome, midias_ids, telas_ids, midia_auto_id) VALUES (?, ?, ?, ?)`).run(
+      nome, JSON.stringify([midiaId]), JSON.stringify(telasIdsValidas), midiaId
+    );
+  }
+}
+
+app.post('/api/midias', requireApiAuth, (req, res) => {
+  const dados = normalizarMidiaBody(req.body);
+  if (!dados.nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+
+  const campos = Object.keys(dados);
+  const stmt = db.prepare(`INSERT INTO midias (${campos.join(', ')}) VALUES (${campos.map(() => '?').join(', ')})`);
+  const result = stmt.run(...campos.map(c => dados[c] ?? null));
+  const midia = db.prepare(`SELECT * FROM midias WHERE id = ?`).get(result.lastInsertRowid);
+
+  if (Array.isArray(req.body.telas_rapidas)) {
+    aplicarInclusaoRapida(midia.id, midia.nome, req.body.telas_rapidas);
+  }
+  res.status(201).json(midia);
 });
 
 app.put('/api/midias/:id', requireApiAuth, (req, res) => {
-  const { nome, url, orientacao, status } = req.body;
   const existing = db.prepare(`SELECT * FROM midias WHERE id = ?`).get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Mídia não encontrada' });
 
-  db.prepare(`UPDATE midias SET nome = ?, url = ?, orientacao = ?, status = ? WHERE id = ?`).run(
-    nome ?? existing.nome,
-    url ?? existing.url,
-    orientacao ?? existing.orientacao,
-    status ?? existing.status,
-    req.params.id
-  );
-  res.json(db.prepare(`SELECT * FROM midias WHERE id = ?`).get(req.params.id));
+  const dados = normalizarMidiaBody(req.body);
+  const campos = Object.keys(dados);
+  if (campos.length) {
+    db.prepare(`UPDATE midias SET ${campos.map(c => `${c} = ?`).join(', ')} WHERE id = ?`).run(
+      ...campos.map(c => dados[c] ?? null),
+      req.params.id
+    );
+  }
+  const midia = db.prepare(`SELECT * FROM midias WHERE id = ?`).get(req.params.id);
+
+  if (Array.isArray(req.body.telas_rapidas)) {
+    aplicarInclusaoRapida(midia.id, midia.nome, req.body.telas_rapidas);
+  }
+  res.json(midia);
 });
 
 app.delete('/api/midias/:id', requireApiAuth, (req, res) => {
   db.prepare(`DELETE FROM midias WHERE id = ?`).run(req.params.id);
+  db.prepare(`DELETE FROM grupos WHERE midia_auto_id = ?`).run(req.params.id);
   res.json({ success: true });
 });
 
@@ -384,31 +463,75 @@ app.delete('/api/clientes/:id', requireApiAuth, (req, res) => {
    ============================================================ */
 app.post('/api/exibicoes', (req, res) => {
   const { tela_id, midia_id } = req.body;
-  db.prepare(`INSERT INTO exibicoes (tela_id, midia_id) VALUES (?, ?)`).run(tela_id, midia_id);
+  const midia = db.prepare(`SELECT gravar_estatisticas FROM midias WHERE id = ?`).get(midia_id);
+  if (!midia || midia.gravar_estatisticas !== 0) {
+    db.prepare(`INSERT INTO exibicoes (tela_id, midia_id) VALUES (?, ?)`).run(tela_id, midia_id);
+  }
   db.prepare(`UPDATE telas SET status = 'online', ultima_comunicacao = CURRENT_TIMESTAMP WHERE id = ?`).run(tela_id);
   res.status(201).json({ success: true });
 });
 
+/* Verifica se a mídia está dentro da janela de agendamento configurada
+   (datas, dias da semana e faixa de horário). Sem nada configurado, sempre exibe. */
+function dentroDaAgenda(m) {
+  const agora = new Date();
+  const hoje = agora.toISOString().slice(0, 10);
+  const hhmm = agora.toTimeString().slice(0, 5);
+  const diaSemana = agora.getDay();
+
+  if (m.agenda_inicio && hoje < m.agenda_inicio) return false;
+  if (m.agenda_fim && hoje > m.agenda_fim) return false;
+
+  const dias = (m.agenda_dias_semana || '0,1,2,3,4,5,6').split(',').filter(x => x !== '').map(Number);
+  if (dias.length && !dias.includes(diaSemana)) return false;
+
+  if (m.agenda_hora_inicio && m.agenda_hora_fim) {
+    if (hhmm < m.agenda_hora_inicio || hhmm > m.agenda_hora_fim) return false;
+  }
+  return true;
+}
+
+/* Escolhe o arquivo certo pra orientação da tela. Mídias com upload
+   (Vídeo/imagem) podem ter um arquivo horizontal e outro vertical;
+   mídias por URL (YouTube/link/programática) usam sempre a mesma URL. */
+function urlParaOrientacao(m, orientacaoTela) {
+  if (m.url_horizontal || m.url_vertical) {
+    return orientacaoTela === 'Vertical' ? (m.url_vertical || null) : (m.url_horizontal || null);
+  }
+  return m.url || null;
+}
+
 /* Mídias públicas para o player de TV (sem auth).
    Se vier ?tela_id=, retorna só as mídias vinculadas a essa tela
-   (via "Vincular telas" / grupos). Sem tela_id, mantém o comportamento
-   antigo (todas) por compatibilidade. */
+   (via "Vincular telas" / grupos), já filtradas por agendamento e
+   com o arquivo certo pra orientação da tela. Sem tela_id, mantém o
+   comportamento antigo (todas, sem filtro de orientação) por compatibilidade. */
 app.get('/api/public/midias', (req, res) => {
   const telaId = req.query.tela_id ? Number(req.query.tela_id) : null;
+  const tela = telaId ? db.prepare(`SELECT * FROM telas WHERE id = ?`).get(telaId) : null;
   const todas = db.prepare(`SELECT * FROM midias ORDER BY criado_em DESC`).all();
 
-  if (!telaId) return res.json(todas);
+  let selecionadas = todas;
+  if (telaId) {
+    const grupos = db.prepare(`SELECT midias_ids, telas_ids FROM grupos WHERE status IS NULL OR status != 'inativo'`).all();
+    const midiaIdsPermitidos = new Set();
+    grupos.forEach(g => {
+      const telasIds = JSON.parse(g.telas_ids || '[]');
+      if (telasIds.includes(telaId)) {
+        JSON.parse(g.midias_ids || '[]').forEach(id => midiaIdsPermitidos.add(id));
+      }
+    });
+    selecionadas = todas.filter(m => midiaIdsPermitidos.has(m.id));
+  }
 
-  const grupos = db.prepare(`SELECT midias_ids, telas_ids FROM grupos WHERE status IS NULL OR status != 'inativo'`).all();
-  const midiaIdsPermitidos = new Set();
-  grupos.forEach(g => {
-    const telasIds = JSON.parse(g.telas_ids || '[]');
-    if (telasIds.includes(telaId)) {
-      JSON.parse(g.midias_ids || '[]').forEach(id => midiaIdsPermitidos.add(id));
-    }
-  });
+  const orientacaoTela = tela ? (tela.orientacao || 'Horizontal') : 'Horizontal';
+  const resultado = selecionadas
+    .filter(m => m.status !== 'inativo')
+    .filter(dentroDaAgenda)
+    .map(m => ({ ...m, url: urlParaOrientacao(m, orientacaoTela) }))
+    .filter(m => m.url);
 
-  res.json(todas.filter(m => midiaIdsPermitidos.has(m.id)));
+  res.json(resultado);
 });
 
 /* ============================================================
