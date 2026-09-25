@@ -15,6 +15,9 @@ const state = {
   instagramPerfis: [],
   filtroTelas: 'todas',
   conteudosDinamicosTab: 'yeloo',
+  telaDetalheId: null,
+  telaDetalhePerfTab: 'mensal',
+  telaDetalhePerf: null,
 };
 
 /* Catálogo estático de conteúdos dinâmicos prontos (biblioteca própria, estilo Yeloo) */
@@ -204,6 +207,7 @@ async function render() {
   switch (state.view) {
     case 'dashboard': return renderDashboard();
     case 'telas': return renderTelas();
+    case 'telaDetalhe': return renderTelaDetalhe();
     case 'campanhas': return renderCampanhas();
     case 'midias': return renderMidias();
     case 'grupos': return renderGrupos();
@@ -418,18 +422,27 @@ async function renderTelas() {
   const offlineCount = state.telas.length - onlineCount;
 
   const rows = filtered.map(t => {
-    const qtdMidias = state.grupos.reduce((acc, g) => {
+    const total = state.grupos.reduce((acc, g) => {
       const telasIds = JSON.parse(g.telas_ids || '[]');
       return telasIds.includes(t.id) ? acc + JSON.parse(g.midias_ids || '[]').length : acc;
     }, 0);
+    const baixadas = Math.min(t.midias_baixadas_ok || 0, total);
+    const completo = total > 0 && baixadas >= total;
+    const emUso = t.disponibilidade === 'em_uso';
     return `
     <tr>
-      <td><strong>${t.nome}</strong><div class="text-muted" style="font-size:11px;">${t.localizacao || t.cidade || '—'} · ID: ${t.id}</div></td>
-      <td><span class="status-pill ${t.status === 'online' ? 'online' : 'offline'}">${t.status === 'online' ? 'Online' : 'Offline'}</span></td>
-      <td>${qtdMidias || '—'}</td>
+      <td>
+        <div class="tela-row-link" onclick="abrirDetalheTela(${t.id})">
+          <div class="tela-thumb">${t.imagem ? `<img src="${t.imagem}" alt="">` : '🖼️'}</div>
+          <div><strong>${t.nome}</strong><div class="text-muted" style="font-size:11px;">${t.segmento || t.localizacao || t.cidade || '—'}</div></div>
+        </div>
+      </td>
+      <td><span class="status-pill ${emUso ? 'active' : 'online'}">${emUso ? '🖥️ Em uso' : '🖥️ Disponível'}</span></td>
+      <td><span class="midias-baixadas-badge ${completo ? 'completo' : ''}">${baixadas}/${total || 0} ${completo ? '✓' : '🕒'}</span></td>
       <td>${timeAgo(t.ultima_comunicacao)}</td>
       <td>
         <div class="action-icons">
+          <button title="Ver detalhes" onclick="abrirDetalheTela(${t.id})">👁️</button>
           <button title="Editar" onclick="editTela(${t.id})">✏️</button>
           <button title="Excluir" class="danger" onclick="deleteTela(${t.id})">🗑️</button>
         </div>
@@ -454,12 +467,244 @@ async function renderTelas() {
         </div>
       ` : `
         <table>
-          <thead><tr><th>Tela</th><th>Disponibilidade</th><th>Mídias vinculadas</th><th>Última comunicação</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Tela</th><th>Disponibilidade</th><th>Mídias baixadas</th><th>Última comunicação</th><th>Ações</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       `}
     </div>
   `;
+}
+
+/* ---------------- Detalhe da tela ---------------- */
+async function abrirDetalheTela(id) {
+  state.view = 'telaDetalhe';
+  state.telaDetalheId = id;
+  state.telaDetalhePerfTab = 'mensal';
+  state.telaDetalhePerf = null;
+  $all('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === 'telas'));
+  render();
+}
+
+function voltarParaTelas() {
+  navigate('telas');
+}
+
+async function renderTelaDetalhe() {
+  const tela = await api(`/telas/${state.telaDetalheId}`);
+  if (!tela) { navigate('telas'); return; }
+  state.grupos = await api('/grupos') || [];
+  const comandos = await api(`/telas/${tela.id}/comandos`) || [];
+  state.telaDetalhePerf = state.telaDetalhePerf || await api(`/telas/${tela.id}/desempenho`) || { diario: [0,0,0,0,0,0,0], mensal: Array(12).fill(0) };
+
+  $('#breadcrumb').textContent = 'Home / Minhas telas / ' + tela.nome;
+  $('#pageTitle').textContent = tela.nome;
+  $('#topbarActions').innerHTML = `<button class="btn btn-secondary" onclick="voltarParaTelas()">← Voltar</button>`;
+
+  const online = tela.status === 'online';
+  const emUso = tela.disponibilidade === 'em_uso';
+  const totalVinculadas = state.grupos.reduce((acc, g) => {
+    const telasIds = JSON.parse(g.telas_ids || '[]');
+    return telasIds.includes(tela.id) ? acc + JSON.parse(g.midias_ids || '[]').length : acc;
+  }, 0);
+
+  $('#content').innerHTML = `
+    <div class="tela-detalhe-header">
+      <div class="tela-thumb">${tela.imagem ? `<img src="${tela.imagem}" alt="">` : '🖼️'}</div>
+      <div class="info">
+        <div class="categoria">${tela.segmento || tela.localizacao || '—'}</div>
+        <h2>${tela.nome}</h2>
+        <div class="meta">
+          <span>${tela.orientacao === 'Vertical' ? '📱 Vertical' : '🖥️ Horizontal'}</span>
+          <span>·</span>
+          <span class="status-pill ${online ? 'online' : 'offline'}">${online ? 'Online agora' : 'Offline'}</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="favorito ${tela.favorito ? 'active' : ''}" title="Favoritar" onclick="toggleFavoritoTela(${tela.id}, ${tela.favorito ? 0 : 1})">⭐</button>
+        <button title="Ver no mapa" onclick="verNoMapaTela(${tela.latitude || 'null'}, ${tela.longitude || 'null'})">📍</button>
+        <button title="Baixar relatório" onclick="baixarRelatorioTela(${tela.id})">⬇️</button>
+        <button title="Histórico de comandos" onclick="abrirHistoricoComandos(${tela.id})">📄</button>
+        <button title="Editar" onclick="editTela(${tela.id})">✏️</button>
+        <button class="danger" title="${tela.status_tela === 'desativado' ? 'Ativar tela' : 'Desativar tela'}" onclick="excluirTelaDetalhe(${tela.id})">🗑️</button>
+      </div>
+    </div>
+
+    <div class="grid grid-2" style="align-items:start;">
+      <div>
+        <div class="d-flex justify-between align-center" style="margin-bottom:12px;">
+          <span class="text-muted" style="font-size:12px;">${tela.orientacao || 'Horizontal'} · ${online ? 'Online agora' : 'Offline'}</span>
+          <button class="btn btn-primary btn-sm" onclick="abrirPlaylistTela(${tela.id})">☰ Playlist</button>
+        </div>
+        <div class="tela-preview">
+          ${online ? `<div class="live-dot"><span class="dot"></span> ONLINE</div>` : ''}
+          ${tela.ultima_midia_url
+            ? (tela.ultima_midia_tipo === 'video'
+                ? `<video src="${tela.ultima_midia_url}" muted autoplay loop playsinline></video>`
+                : `<img src="${tela.ultima_midia_url}" alt="">`)
+            : `<div class="placeholder">${online ? 'Aguardando a próxima exibição…' : 'Tela offline — sem prévia disponível'}</div>`}
+        </div>
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">Comandos remotos</span>
+            <button class="btn btn-primary btn-sm" onclick="abrirEnviarComandoModal(${tela.id})">+ Enviar comando</button>
+          </div>
+          <div class="comando-list">
+            ${comandos.length === 0 ? '<p class="text-muted" style="font-size:12px;">Nenhum comando enviado ainda.</p>' : comandos.map(c => `
+              <div class="comando-item">
+                <div><div class="nome">${COMANDOS_LABELS[c.comando] || c.comando}</div><div class="quando">${timeAgo(c.criado_em)}</div></div>
+                <span class="status-pill ${c.status === 'concluido' ? 'active' : c.status === 'enviado' ? 'paused' : 'offline'}">${COMANDO_STATUS_LABELS[c.status] || c.status}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card" style="margin-bottom:20px;">
+          <div class="perf-tabs">
+            <button class="${state.telaDetalhePerfTab === 'mensal' ? 'active' : ''}" onclick="mudarPerfTab('mensal')">Mensal</button>
+            <button class="${state.telaDetalhePerfTab === 'diario' ? 'active' : ''}" onclick="mudarPerfTab('diario')">Diário</button>
+          </div>
+          <div id="perfChartWrap">${renderPerfChart()}</div>
+          <div class="text-muted" style="font-size:11px;margin-top:8px;">DESEMPENHO DA TELA</div>
+        </div>
+
+        <div class="card" style="margin-bottom:20px;">
+          <div class="card-header"><span class="card-title">Dispositivo</span></div>
+          <div class="device-info-grid">
+            <div class="item"><div class="lbl">📱 Modelo</div><div class="val ${!tela.modelo ? 'muted' : ''}">${tela.modelo || '(Não disponível)'}</div></div>
+            <div class="item"><div class="lbl">⚙️ Processador</div><div class="val ${!tela.processador ? 'muted' : ''}">${tela.processador || '(Não disponível)'}</div></div>
+            <div class="item"><div class="lbl">🤖 Versão Android</div><div class="val ${!tela.versao_android ? 'muted' : ''}">${tela.versao_android || '(Não disponível)'}</div></div>
+            <div class="item"><div class="lbl">🔓 Rooteado</div><div class="val">${tela.rooteado ? 'Sim' : 'Não'}</div></div>
+            <div class="item"><div class="lbl">📦 Versão APP</div><div class="val ${!tela.versao_app ? 'muted' : ''}">${tela.versao_app || '(Não disponível)'}</div></div>
+            <div class="item"><div class="lbl">💾 Uso de memória</div><div class="val ${!tela.uso_memoria_mb ? 'muted' : ''}">${tela.uso_memoria_mb ? tela.uso_memoria_mb.toFixed(2) + ' MB' : '(Não disponível)'}</div></div>
+            <div class="item"><div class="lbl">🖼️ Orientação</div><div class="val">${tela.orientacao || 'Horizontal'}</div></div>
+            <div class="item"><div class="lbl">🎞️ Mídias vinculadas</div><div class="val">${totalVinculadas}</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">Anotações</span></div>
+          <div class="notes-toolbar">
+            <select disabled><option>Normal</option></select>
+            <button type="button" title="Negrito"><b>B</b></button>
+            <button type="button" title="Itálico"><i>I</i></button>
+            <button type="button" title="Sublinhado"><u>U</u></button>
+            <button type="button" title="Lista">≡</button>
+          </div>
+          <textarea id="telaAnotacoes" class="notes-textarea" placeholder="Use para qualquer anotações úteis...">${tela.anotacoes || ''}</textarea>
+          <button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="salvarAnotacoesTela(${tela.id})">Salvar anotações</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+const COMANDOS_LABELS = {
+  reiniciar_app: 'Reiniciar app',
+  atualizar_midias: 'Atualizar mídias agora',
+  reiniciar_dispositivo: 'Reiniciar dispositivo',
+};
+const COMANDO_STATUS_LABELS = { pendente: 'Pendente', enviado: 'Enviado', concluido: 'Concluído' };
+
+function renderPerfChart() {
+  const perf = state.telaDetalhePerf || { diario: [0,0,0,0,0,0,0], mensal: Array(12).fill(0) };
+  if (state.telaDetalhePerfTab === 'diario') {
+    const dias = ['DOM','SEG','TER','QUA','QUI','SEX','SÁB'];
+    const dados = perf.diario;
+    const max = Math.max(1, ...dados);
+    return `<div class="perf-bars">${dias.map((d, i) => `
+      <div class="bar-col">
+        <div class="bar"><div class="fill" style="height:${Math.round(dados[i] / max * 100)}%;"></div></div>
+        <div class="lbl">${d.slice(0,3).toLowerCase()}</div>
+      </div>`).join('')}</div>`;
+  }
+  const meses = ['OUT','NOV','DEZ','JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET'];
+  const dados = perf.mensal;
+  const max = Math.max(1, ...dados);
+  return `<div class="perf-bars">${meses.map((m, i) => `
+    <div class="bar-col">
+      <div class="bar"><div class="fill" style="height:${Math.round(dados[i] / max * 100)}%;"></div></div>
+      <div class="lbl">${m}</div>
+    </div>`).join('')}</div>`;
+}
+
+function mudarPerfTab(tab) {
+  state.telaDetalhePerfTab = tab;
+  $('#perfChartWrap').innerHTML = renderPerfChart();
+  $all('.perf-tabs button').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === tab));
+}
+
+async function toggleFavoritoTela(id, valor) {
+  await api(`/telas/${id}`, { method: 'PUT', body: JSON.stringify({ favorito: valor }) });
+  renderTelaDetalhe();
+}
+
+function verNoMapaTela(lat, lng) {
+  if (!lat || !lng) { toast('Esta tela não tem localização cadastrada', 'error'); return; }
+  window.open(`https://www.google.com/maps?q=${lat},${lng}`, '_blank');
+}
+
+function baixarRelatorioTela(id) {
+  window.open(`${API}/telas/${id}/relatorio.csv`, '_blank');
+}
+
+async function excluirTelaDetalhe(id) {
+  if (!confirm('Excluir esta tela? Essa ação não pode ser desfeita.')) return;
+  await api(`/telas/${id}`, { method: 'DELETE' });
+  toast('Tela excluída');
+  navigate('telas');
+}
+
+function abrirHistoricoComandos(id) {
+  toast('O histórico completo aparece na seção "Comandos remotos" abaixo');
+}
+
+async function abrirPlaylistTela(telaId) {
+  const grupos = state.grupos.filter(g => JSON.parse(g.telas_ids || '[]').includes(telaId));
+  const midiaIds = new Set();
+  grupos.forEach(g => JSON.parse(g.midias_ids || '[]').forEach(id => midiaIds.add(id)));
+  state.midias = await api('/midias') || [];
+  const midias = state.midias.filter(m => midiaIds.has(m.id));
+
+  openModal(`
+    <div class="modal-header"><h3>Playlist desta tela</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      ${midias.length === 0 ? '<p class="text-muted">Nenhuma mídia vinculada. Vá em "Vincular telas" para adicionar.</p>' : midias.map(m => `
+        <div class="playlist-item">
+          <span>${m.tipo === 'video' ? '🎬' : '🖼️'} ${m.nome}</span>
+          <span class="text-muted">${m.duracao_segundos || 10}s</span>
+        </div>
+      `).join('')}
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Fechar</button></div>
+  `);
+}
+
+function abrirEnviarComandoModal(telaId) {
+  openModal(`
+    <div class="modal-header"><h3>Enviar comando</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="select-cards" style="grid-template-columns:1fr;">
+        <div class="select-card" style="cursor:pointer;text-align:left;padding:14px;" onclick="enviarComandoTela(${telaId}, 'atualizar_midias')">🔄 Atualizar mídias agora</div>
+        <div class="select-card" style="cursor:pointer;text-align:left;padding:14px;" onclick="enviarComandoTela(${telaId}, 'reiniciar_app')">♻️ Reiniciar app</div>
+        <div class="select-card" style="cursor:pointer;text-align:left;padding:14px;" onclick="enviarComandoTela(${telaId}, 'reiniciar_dispositivo')">🔌 Reiniciar dispositivo</div>
+      </div>
+    </div>
+  `);
+}
+
+async function enviarComandoTela(telaId, comando) {
+  await api(`/telas/${telaId}/comandos`, { method: 'POST', body: JSON.stringify({ comando }) });
+  closeModal();
+  toast('Comando enviado — será executado assim que a tela sincronizar');
+  renderTelaDetalhe();
+}
+
+async function salvarAnotacoesTela(id) {
+  const anotacoes = document.getElementById('telaAnotacoes')?.value || '';
+  await api(`/telas/${id}`, { method: 'PUT', body: JSON.stringify({ anotacoes }) });
+  toast('Anotações salvas');
 }
 
 function setFiltroTelas(f) { state.filtroTelas = f; renderTelas(); }

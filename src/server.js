@@ -110,6 +110,43 @@ app.put('/api/me', (req, res) => {
 });
 
 /* ============================================================
+   API — Login do APP Android (pareamento do TV Box)
+   Usa o MESMO usuário/senha do painel web. Sem sessão/cookie —
+   o app usa isso só uma vez, pra escolher a tela e vincular o
+   aparelho a ela (depois disso ele fala só com as rotas públicas).
+   ============================================================ */
+app.post('/api/tv/login', (req, res) => {
+  const { email, senha } = req.body || {};
+  if (!email || !senha) return res.status(400).json({ error: 'Email e senha são obrigatórios' });
+
+  const user = db.prepare(`SELECT * FROM usuarios WHERE email = ?`).get(String(email).toLowerCase().trim());
+  if (!user || !auth.verifyPassword(senha, user.senha_hash)) {
+    return res.status(401).json({ error: 'Email ou senha inválidos' });
+  }
+
+  const grupos = db.prepare(`SELECT midias_ids, telas_ids FROM grupos WHERE status IS NULL OR status != 'inativo'`).all();
+  const telas = db.prepare(`SELECT * FROM telas ORDER BY nome ASC`).all().map(t => {
+    const totalMidias = grupos.reduce((acc, g) => {
+      const telasIds = JSON.parse(g.telas_ids || '[]');
+      return telasIds.includes(t.id) ? acc + JSON.parse(g.midias_ids || '[]').length : acc;
+    }, 0);
+    let config = {};
+    try { config = JSON.parse(t.config || '{}'); } catch (e) {}
+    const enderecoPartes = [t.endereco, t.numero, t.bairro, t.cidade].filter(Boolean);
+    return {
+      id: t.id,
+      nome: t.nome,
+      endereco: enderecoPartes.join(', ') || t.localizacao || null,
+      orientacao: t.orientacao || 'Horizontal',
+      ciclo_atualizacao_min: config.intervalo_atualizacao || null,
+      total_midias: totalMidias,
+    };
+  });
+
+  res.json({ success: true, telas });
+});
+
+/* ============================================================
    Middleware de autenticação para rotas protegidas da API
    ============================================================ */
 function requireApiAuth(req, res, next) {
@@ -123,7 +160,7 @@ function requireApiAuth(req, res, next) {
    API — Stats
    ============================================================ */
 app.get('/api/stats', requireApiAuth, (req, res) => {
-  const telas_online = db.prepare(`SELECT COUNT(*) as c FROM telas WHERE status = 'online'`).get().c;
+  const telas_online = db.prepare(`SELECT COUNT(*) as c FROM telas WHERE ultima_comunicacao >= datetime('now', '-3 minutes')`).get().c;
   const telas_total = db.prepare(`SELECT COUNT(*) as c FROM telas`).get().c;
   const campanhas_ativas = db.prepare(`SELECT COUNT(*) as c FROM campanhas WHERE status = 'ativa'`).get().c;
   const exibicoes_hoje = db.prepare(`SELECT COUNT(*) as c FROM exibicoes WHERE date(exibido_em) = date('now')`).get().c;
@@ -151,8 +188,32 @@ app.get('/api/stats', requireApiAuth, (req, res) => {
 /* ============================================================
    API — Telas
    ============================================================ */
+/* Considera a tela online se ela se comunicou (heartbeat ou proof-of-play)
+   nos últimos 3 minutos — evita depender de a TV avisar quando desliga. */
+const ONLINE_LIMIAR_MINUTOS = 3;
+function estaOnline(tela) {
+  if (!tela.ultima_comunicacao) return false;
+  const diffMs = Date.now() - new Date(tela.ultima_comunicacao + 'Z').getTime();
+  return diffMs >= 0 && diffMs <= ONLINE_LIMIAR_MINUTOS * 60_000;
+}
+function serializarTela(tela) {
+  const online = estaOnline(tela);
+  return {
+    ...tela,
+    status: online ? 'online' : 'offline',
+    disponibilidade: online ? 'em_uso' : 'disponivel',
+  };
+}
+
 app.get('/api/telas', requireApiAuth, (req, res) => {
-  res.json(db.prepare(`SELECT * FROM telas ORDER BY criado_em DESC`).all());
+  const telas = db.prepare(`SELECT * FROM telas ORDER BY criado_em DESC`).all();
+  res.json(telas.map(serializarTela));
+});
+
+app.get('/api/telas/:id', requireApiAuth, (req, res) => {
+  const tela = db.prepare(`SELECT * FROM telas WHERE id = ?`).get(req.params.id);
+  if (!tela) return res.status(404).json({ error: 'Tela não encontrada' });
+  res.json(serializarTela(tela));
 });
 
 /* Campos do cadastro completo de tela (Info, Localização, Métricas, Configurações) */
@@ -161,7 +222,7 @@ const TELA_CAMPOS = [
   'telefone1', 'telefone2',
   'endereco', 'numero', 'complemento', 'bairro', 'cep', 'estado', 'cidade', 'latitude', 'longitude',
   'segmento', 'horario_inicio', 'horario_fim', 'dias_semana', 'fluxo_pessoas', 'classes_sociais',
-  'config',
+  'config', 'anotacoes', 'favorito',
 ];
 
 function normalizarTelaBody(body) {
@@ -172,6 +233,7 @@ function normalizarTelaBody(body) {
     if (campo === 'dias_semana' && Array.isArray(v)) v = v.join(',');
     if (campo === 'classes_sociais' && Array.isArray(v)) v = JSON.stringify(v);
     if (campo === 'config' && typeof v === 'object' && v !== null) v = JSON.stringify(v);
+    if (campo === 'favorito') v = v ? 1 : 0;
     out[campo] = v;
   }
   return out;
@@ -186,7 +248,7 @@ app.post('/api/telas', requireApiAuth, (req, res) => {
     `INSERT INTO telas (${campos.join(', ')}) VALUES (${campos.map(() => '?').join(', ')})`
   );
   const result = stmt.run(...campos.map(c => dados[c] ?? null));
-  res.status(201).json(db.prepare(`SELECT * FROM telas WHERE id = ?`).get(result.lastInsertRowid));
+  res.status(201).json(serializarTela(db.prepare(`SELECT * FROM telas WHERE id = ?`).get(result.lastInsertRowid)));
 });
 
 app.put('/api/telas/:id', requireApiAuth, (req, res) => {
@@ -202,11 +264,125 @@ app.put('/api/telas/:id', requireApiAuth, (req, res) => {
       req.params.id
     );
   }
-  res.json(db.prepare(`SELECT * FROM telas WHERE id = ?`).get(req.params.id));
+  res.json(serializarTela(db.prepare(`SELECT * FROM telas WHERE id = ?`).get(req.params.id)));
 });
 
 app.delete('/api/telas/:id', requireApiAuth, (req, res) => {
   db.prepare(`DELETE FROM telas WHERE id = ?`).run(req.params.id);
+  db.prepare(`DELETE FROM comandos_remotos WHERE tela_id = ?`).run(req.params.id);
+  res.json({ success: true });
+});
+
+/* ============================================================
+   API — Desempenho de uma tela específica (gráfico Mensal/Diário)
+   ============================================================ */
+app.get('/api/telas/:id/desempenho', requireApiAuth, (req, res) => {
+  const telaId = req.params.id;
+
+  /* Diário: exibições dos últimos 7 dias por dia da semana */
+  const diarias = db.prepare(`
+    SELECT strftime('%w', exibido_em) as dow, COUNT(*) as c
+    FROM exibicoes WHERE tela_id = ? AND exibido_em >= datetime('now', '-6 days')
+    GROUP BY dow
+  `).all(telaId);
+  const diario = [0, 0, 0, 0, 0, 0, 0];
+  diarias.forEach(l => { diario[Number(l.dow)] = l.c; });
+
+  /* Mensal: exibições dos últimos 12 meses por mês */
+  const mensais = db.prepare(`
+    SELECT strftime('%m', exibido_em) as mes, COUNT(*) as c
+    FROM exibicoes WHERE tela_id = ? AND exibido_em >= datetime('now', '-12 months')
+    GROUP BY mes
+  `).all(telaId);
+  const mensal = Array(12).fill(0);
+  mensais.forEach(l => { mensal[Number(l.mes) - 1] = l.c; });
+
+  res.json({ diario, mensal });
+});
+
+/* Relatório simples de exibições da tela, em CSV (pra baixar do painel) */
+app.get('/api/telas/:id/relatorio.csv', requireApiAuth, (req, res) => {
+  const tela = db.prepare(`SELECT * FROM telas WHERE id = ?`).get(req.params.id);
+  if (!tela) return res.status(404).send('Tela não encontrada');
+  const exibicoes = db.prepare(`
+    SELECT e.exibido_em, m.nome as midia_nome
+    FROM exibicoes e LEFT JOIN midias m ON m.id = e.midia_id
+    WHERE e.tela_id = ? ORDER BY e.exibido_em DESC LIMIT 1000
+  `).all(req.params.id);
+
+  const linhas = ['Data/hora,Mídia'];
+  exibicoes.forEach(e => linhas.push(`${e.exibido_em},"${(e.midia_nome || '—').replace(/"/g, '""')}"`));
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="relatorio-${tela.nome.replace(/[^a-z0-9]+/gi, '-')}.csv"`);
+  res.send('﻿' + linhas.join('\n'));
+});
+
+/* ============================================================
+   API — Comandos remotos (autenticado: criar/listar; público: TV consome)
+   ============================================================ */
+app.get('/api/telas/:id/comandos', requireApiAuth, (req, res) => {
+  res.json(db.prepare(`SELECT * FROM comandos_remotos WHERE tela_id = ? ORDER BY criado_em DESC LIMIT 30`).all(req.params.id));
+});
+
+app.post('/api/telas/:id/comandos', requireApiAuth, (req, res) => {
+  const { comando } = req.body;
+  if (!comando) return res.status(400).json({ error: 'Comando é obrigatório' });
+  const result = db.prepare(`INSERT INTO comandos_remotos (tela_id, comando) VALUES (?, ?)`).run(req.params.id, comando);
+  res.status(201).json(db.prepare(`SELECT * FROM comandos_remotos WHERE id = ?`).get(result.lastInsertRowid));
+});
+
+/* A TV busca comandos pendentes (sem auth) e o servidor já marca como "enviado" */
+app.get('/api/public/telas/:id/comandos', (req, res) => {
+  const pendentes = db.prepare(`SELECT * FROM comandos_remotos WHERE tela_id = ? AND status = 'pendente' ORDER BY criado_em ASC`).all(req.params.id);
+  const ids = pendentes.map(c => c.id);
+  if (ids.length) {
+    db.prepare(`UPDATE comandos_remotos SET status = 'enviado', enviado_em = CURRENT_TIMESTAMP WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+  }
+  res.json(pendentes);
+});
+
+/* A TV avisa quando terminou de executar um comando (sem auth) */
+app.post('/api/public/telas/:id/comandos/:comandoId/concluir', (req, res) => {
+  db.prepare(`UPDATE comandos_remotos SET status = 'concluido', concluido_em = CURRENT_TIMESTAMP WHERE id = ? AND tela_id = ?`)
+    .run(req.params.comandoId, req.params.id);
+  res.json({ success: true });
+});
+
+/* ============================================================
+   API — Heartbeat de dispositivo (sem auth, chamado periodicamente pelo app Android)
+   Reporta status "vivo" + dados do dispositivo pra tela "Detalhe da tela".
+   ============================================================ */
+app.post('/api/public/telas/:id/heartbeat', (req, res) => {
+  const tela = db.prepare(`SELECT * FROM telas WHERE id = ?`).get(req.params.id);
+  if (!tela) return res.status(404).json({ error: 'Tela não encontrada' });
+
+  const {
+    modelo, processador, versao_android, rooteado, versao_app, uso_memoria_mb,
+    midias_baixadas_total, midias_baixadas_ok,
+  } = req.body || {};
+
+  db.prepare(`
+    UPDATE telas SET
+      status = 'online',
+      ultima_comunicacao = CURRENT_TIMESTAMP,
+      modelo = COALESCE(?, modelo),
+      processador = COALESCE(?, processador),
+      versao_android = COALESCE(?, versao_android),
+      rooteado = COALESCE(?, rooteado),
+      versao_app = COALESCE(?, versao_app),
+      uso_memoria_mb = COALESCE(?, uso_memoria_mb),
+      midias_baixadas_total = COALESCE(?, midias_baixadas_total),
+      midias_baixadas_ok = COALESCE(?, midias_baixadas_ok)
+    WHERE id = ?
+  `).run(
+    modelo ?? null, processador ?? null, versao_android ?? null,
+    rooteado === undefined ? null : (rooteado ? 1 : 0),
+    versao_app ?? null, uso_memoria_mb ?? null,
+    midias_baixadas_total ?? null, midias_baixadas_ok ?? null,
+    req.params.id
+  );
+
   res.json({ success: true });
 });
 
@@ -463,11 +639,19 @@ app.delete('/api/clientes/:id', requireApiAuth, (req, res) => {
    ============================================================ */
 app.post('/api/exibicoes', (req, res) => {
   const { tela_id, midia_id } = req.body;
-  const midia = db.prepare(`SELECT gravar_estatisticas FROM midias WHERE id = ?`).get(midia_id);
+  const midia = db.prepare(`SELECT * FROM midias WHERE id = ?`).get(midia_id);
   if (!midia || midia.gravar_estatisticas !== 0) {
     db.prepare(`INSERT INTO exibicoes (tela_id, midia_id) VALUES (?, ?)`).run(tela_id, midia_id);
   }
-  db.prepare(`UPDATE telas SET status = 'online', ultima_comunicacao = CURRENT_TIMESTAMP WHERE id = ?`).run(tela_id);
+  if (midia) {
+    db.prepare(`
+      UPDATE telas SET status = 'online', ultima_comunicacao = CURRENT_TIMESTAMP,
+        ultima_midia_nome = ?, ultima_midia_url = ?, ultima_midia_tipo = ?
+      WHERE id = ?
+    `).run(midia.nome, midia.url_horizontal || midia.url_vertical || midia.url || null, midia.tipo, tela_id);
+  } else {
+    db.prepare(`UPDATE telas SET status = 'online', ultima_comunicacao = CURRENT_TIMESTAMP WHERE id = ?`).run(tela_id);
+  }
   res.status(201).json({ success: true });
 });
 

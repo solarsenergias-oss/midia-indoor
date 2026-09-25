@@ -173,4 +173,39 @@ Object.entries(midiaColsNovas).forEach(([col, ddl]) => {
 const grupoCols = db.prepare(`PRAGMA table_info(grupos)`).all().map(c => c.name);
 if (!grupoCols.includes('midia_auto_id')) db.exec(`ALTER TABLE grupos ADD COLUMN midia_auto_id INTEGER`);
 
+/* Migração leve: monitoramento de dispositivo, comandos remotos, anotações e
+   favorito na página de detalhe da tela ("Minhas telas" > clicar numa tela) */
+const telaColsMonitor = {
+  modelo: `TEXT`,
+  processador: `TEXT`,
+  versao_android: `TEXT`,
+  rooteado: `INTEGER DEFAULT 0`,
+  versao_app: `TEXT`,
+  uso_memoria_mb: `REAL`,
+  midias_baixadas_total: `INTEGER DEFAULT 0`,
+  midias_baixadas_ok: `INTEGER DEFAULT 0`,
+  anotacoes: `TEXT`,
+  favorito: `INTEGER DEFAULT 0`,
+  ultima_midia_nome: `TEXT`,
+  ultima_midia_url: `TEXT`,
+  ultima_midia_tipo: `TEXT`,
+};
+const telaColsAtuais2 = db.prepare(`PRAGMA table_info(telas)`).all().map(c => c.name);
+Object.entries(telaColsMonitor).forEach(([col, ddl]) => {
+  if (!telaColsAtuais2.includes(col)) db.exec(`ALTER TABLE telas ADD COLUMN ${col} ${ddl}`);
+});
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS comandos_remotos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tela_id INTEGER NOT NULL,
+    comando TEXT NOT NULL,
+    status TEXT DEFAULT 'pendente',
+    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+    enviado_em DATETIME,
+    concluido_em DATETIME,
+    FOREIGN KEY (tela_id) REFERENCES telas(id) ON DELETE CASCADE
+  );
+`);
+
 module.exports = db;

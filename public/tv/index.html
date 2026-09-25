@@ -10,8 +10,7 @@
   body { font-family: -apple-system, Arial, sans-serif; color: #fff; }
   .player { width: 100vw; height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; }
   .content { text-align: center; }
-  .logo { width: 90px; height: 90px; display:flex; align-items:center; justify-content:center; margin: 0 auto 24px; }
-  h1 { font-size: 40px; margin-bottom: 12px; }
+  .logo { display:flex; align-items:center; justify-content:center; margin: 0 auto 24px; }
   p { font-size: 18px; color: #9ca3af; }
   .status { position: absolute; top: 24px; right: 24px; padding: 8px 18px; background: rgba(22,163,74,0.15); color: #4ade80; border: 1px solid #16a34a; border-radius: 20px; font-weight: 700; font-size: 13px; display:flex; align-items:center; gap:8px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; animation: pulse 2s infinite; }
@@ -25,19 +24,8 @@
     <div class="status"><span class="dot"></span> ONLINE</div>
     <div class="content" id="placeholder">
       <div class="logo">
-        <svg viewBox="0 0 100 100" width="90" height="90" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="vizzoGradTv" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#6C5CE0"/>
-              <stop offset="100%" stop-color="#22B8A0"/>
-            </linearGradient>
-          </defs>
-          <path d="M18 8 L90 50 L18 92 Z" fill="url(#vizzoGradTv)"/>
-          <ellipse cx="40" cy="50" rx="17" ry="11" fill="#fff"/>
-          <circle cx="40" cy="50" r="6.5" fill="#1a1d24"/>
-        </svg>
+        <img src="/assets/brand/lockup-dark.png" alt="VizzoPlay" style="height:64px;width:auto;">
       </div>
-      <h1>VizzoPlay</h1>
       <p>Aguardando conteúdo do servidor...</p>
     </div>
     <img id="mediaFrame" alt="">
