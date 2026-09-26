@@ -18,7 +18,21 @@ const state = {
   telaDetalheId: null,
   telaDetalhePerfTab: 'mensal',
   telaDetalhePerf: null,
+  relatoriosPeriodo: 7,
+  whatsappConfig: null,
+  whatsappContatos: [],
+  whatsappEtiquetas: [],
+  whatsappTemplates: [],
+  whatsappConversas: [],
+  whatsappConversaAtualId: null,
+  whatsappCrmView: 'lista',
+  whatsappFiltroTag: '',
+  whatsappFiltroEtapa: '',
+  whatsappBusca: '',
 };
+
+/* Etapas do funil de vendas do CRM do WhatsApp (mesma lista do back-end) */
+const FUNIL_ETAPAS = ['Novo', 'Em conversa', 'Proposta enviada', 'Fechado', 'Perdido'];
 
 /* Catálogo estático de conteúdos dinâmicos prontos (biblioteca própria, estilo Yeloo) */
 const CONTEUDOS_DINAMICOS = {
@@ -120,6 +134,12 @@ const titles = {
   utilitarios: ['Conteúdos', 'Utilitários'],
   clientes: ['Home', 'Clientes'],
   relatorios: ['Home', 'Relatórios'],
+  'whatsapp-atendimento': ['WhatsApp', 'Atendimento'],
+  'whatsapp-crm': ['WhatsApp', 'CRM'],
+  'whatsapp-etiquetas': ['WhatsApp', 'Etiquetas'],
+  'whatsapp-templates': ['WhatsApp', 'Modelos de mensagem'],
+  'whatsapp-metricas': ['WhatsApp', 'Métricas'],
+  'whatsapp-config': ['WhatsApp', 'Configurações'],
 };
 
 function navigate(view) {
@@ -167,7 +187,10 @@ if (collapseToggle && sidebarEl) {
     const collapsed = sidebarEl.classList.toggle('collapsed');
     collapseToggle.title = collapsed ? 'Expandir menu' : 'Recolher menu';
     localStorage.setItem('midia_indoor_sidebar_collapsed', collapsed);
-    if (collapsed) $('#conteudosSubmenu').style.display = 'none';
+    if (collapsed) {
+      $('#conteudosSubmenu').style.display = 'none';
+      $('#whatsappSubmenu').style.display = 'none';
+    }
   });
 }
 
@@ -180,6 +203,18 @@ if (conteudosToggle) {
     const isOpen = conteudosSubmenu.style.display === 'block';
     conteudosSubmenu.style.display = isOpen ? 'none' : 'block';
     conteudosChevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
+  });
+}
+
+/* Dropdown "WhatsApp" */
+const whatsappToggle = $('#whatsappToggle');
+const whatsappSubmenu = $('#whatsappSubmenu');
+const whatsappChevron = $('#whatsappChevron');
+if (whatsappToggle) {
+  whatsappToggle.addEventListener('click', () => {
+    const isOpen = whatsappSubmenu.style.display === 'block';
+    whatsappSubmenu.style.display = isOpen ? 'none' : 'block';
+    whatsappChevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
   });
 }
 
@@ -218,6 +253,12 @@ async function render() {
     case 'utilitarios': return renderEmConstrucao('🧰', 'Utilitários', 'Ferramentas extras: relógio, previsão do tempo, cotações e contadores.');
     case 'clientes': return renderClientes();
     case 'relatorios': return renderRelatorios();
+    case 'whatsapp-atendimento': return renderWhatsappAtendimento();
+    case 'whatsapp-crm': return renderWhatsappCrm();
+    case 'whatsapp-etiquetas': return renderWhatsappEtiquetas();
+    case 'whatsapp-templates': return renderWhatsappTemplates();
+    case 'whatsapp-metricas': return renderWhatsappMetricas();
+    case 'whatsapp-config': return renderWhatsappConfig();
     default: content.innerHTML = '<p>View não encontrada</p>';
   }
 }
@@ -2200,16 +2241,706 @@ function renderEmConstrucao(icon, titulo, descricao) {
 }
 
 /* ---------------- Relatórios ---------------- */
-function renderRelatorios() {
+async function renderRelatorios() {
+  $('#topbarActions').innerHTML = '';
+  const dias = state.relatoriosPeriodo || 7;
+
+  const [overview, exibicoes, disponibilidade] = await Promise.all([
+    api('/relatorios/overview'),
+    api(`/relatorios/exibicoes?dias=${dias}`),
+    api(`/relatorios/disponibilidade?dias=${dias}`),
+  ]);
+
+  const ov = overview || { telas_total: 0, telas_online: 0, telas_offline: 0, clientes_total: 0, campanhas_ativas: 0, midias_total: 0 };
+  const exib = exibicoes || { telas: [] };
+  const disp = disponibilidade || { telas: [], modo: 'instantaneo' };
+
+  const cardsOverview = [
+    ['📺', 'Telas cadastradas', ov.telas_total, 'var(--text)'],
+    ['🟢', 'Telas online agora', ov.telas_online, 'var(--success)'],
+    ['⚪', 'Telas offline', ov.telas_offline, 'var(--text-muted)'],
+    ['👥', 'Clientes', ov.clientes_total, 'var(--text)'],
+    ['📢', 'Campanhas ativas', ov.campanhas_ativas, 'var(--text)'],
+    ['🎞️', 'Mídias cadastradas', ov.midias_total, 'var(--text)'],
+  ];
+
   $('#content').innerHTML = `
-    <div class="table-wrap">
-      <div class="empty-state">
-        <div class="icon">📈</div>
-        <h4>Relatórios em construção</h4>
-        <p>Em breve você poderá acompanhar estatísticas detalhadas de exibição por tela e campanha.</p>
+    <div class="grid grid-3" style="margin-bottom:20px;">
+      ${cardsOverview.map(([icon, label, valor, cor]) => `
+        <div class="card">
+          <div class="card-title" style="color:var(--text-muted);font-weight:600;">${icon} ${label}</div>
+          <div class="stat-value" style="color:${cor};">${valor}</div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="filter-chips" style="margin-bottom:14px;">
+      <div class="chip ${dias === 7 ? 'active' : ''}" onclick="setRelatoriosPeriodo(7)">Últimos 7 dias</div>
+      <div class="chip ${dias === 30 ? 'active' : ''}" onclick="setRelatoriosPeriodo(30)">Últimos 30 dias</div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;padding:0;">
+      <div class="card-header" style="padding:20px 20px 0;"><span class="card-title">Exibições por tela</span></div>
+      <div style="padding:0 4px 4px;">
+        ${exib.telas.length === 0 ? '<p class="text-muted" style="font-size:12px;padding:0 16px 16px;">Nenhuma tela cadastrada ainda.</p>' : `
+          <table>
+            <thead><tr><th>Tela</th><th>Exibições no período</th><th>Última exibição</th></tr></thead>
+            <tbody>
+              ${exib.telas.map(t => `
+                <tr><td>${t.tela_nome}</td><td>${t.total_exibicoes}</td><td>${t.ultima_exibicao ? timeAgo(t.ultima_exibicao) : '—'}</td></tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Taxa de disponibilidade por tela</span></div>
+      ${disp.modo === 'instantaneo' ? `
+        <p class="text-muted" style="font-size:12px;margin-bottom:14px;">
+          Ainda não há histórico suficiente para calcular a disponibilidade ao longo do período — mostrando o status atual de cada tela.
+          O histórico começa a ser gravado automaticamente a partir de agora (a cada 5 minutos), então em alguns dias essa métrica passa a refletir o período real.
+        </p>
+      ` : ''}
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        ${disp.telas.length === 0 ? '<p class="text-muted" style="font-size:12px;">Nenhuma tela cadastrada ainda.</p>' : disp.telas.map(t => {
+          const pct = t.disponibilidade_pct;
+          const cor = pct == null ? 'var(--text-muted)' : pct >= 90 ? 'var(--success)' : pct >= 60 ? 'var(--warning)' : 'var(--danger)';
+          return `
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>${t.tela_nome}</span><strong>${pct == null ? '—' : pct + '%'}</strong></div>
+            <div style="background:var(--bg);border-radius:6px;height:10px;overflow:hidden;">
+              <div style="height:100%;width:${pct || 0}%;background:${cor};"></div>
+            </div>
+          </div>`;
+        }).join('')}
       </div>
     </div>
   `;
+}
+
+function setRelatoriosPeriodo(dias) {
+  state.relatoriosPeriodo = dias;
+  renderRelatorios();
+}
+
+/* ============================================================
+   WhatsApp CRM
+   ============================================================ */
+const WHATSAPP_TABS = [
+  ['whatsapp-atendimento', '📥 Atendimento'],
+  ['whatsapp-crm', '🧭 CRM'],
+  ['whatsapp-etiquetas', '🏷️ Etiquetas'],
+  ['whatsapp-templates', '📄 Modelos'],
+  ['whatsapp-metricas', '📊 Métricas'],
+  ['whatsapp-config', '⚙️ Configurações'],
+];
+function renderWhatsappTabs(ativo) {
+  return `<div class="modal-tabs" style="margin-bottom:16px;">
+    ${WHATSAPP_TABS.map(([key, label]) => `<div class="modal-tab ${key === ativo ? 'active' : ''}" onclick="navigate('${key}')">${label}</div>`).join('')}
+  </div>`;
+}
+
+function whatsappConfigBanner() {
+  return `
+    <div class="alert-banner" style="background:rgba(217,164,6,.12);border:1px solid #d4a017;color:#e0b23a;padding:12px 16px;border-radius:var(--radius-sm);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+      <div>⚠️ WhatsApp não configurado — vá em Configurações</div>
+      <button class="btn btn-secondary btn-sm" onclick="navigate('whatsapp-config')">Configurar agora</button>
+    </div>
+  `;
+}
+function whatsappConfigured() {
+  const c = state.whatsappConfig;
+  return !!(c && c.phone_number_id && c.access_token);
+}
+
+/* ---------------- Atendimento (Inbox) ---------------- */
+async function renderWhatsappAtendimento() {
+  $('#topbarActions').innerHTML = '';
+  state.whatsappConfig = await api('/whatsapp/config') || {};
+
+  if (!whatsappConfigured()) {
+    $('#content').innerHTML = renderWhatsappTabs('whatsapp-atendimento') + whatsappConfigBanner();
+    return;
+  }
+
+  state.whatsappConversas = await api('/whatsapp/conversas') || [];
+  const conversaAtual = state.whatsappConversaAtualId
+    ? state.whatsappConversas.find(c => c.id === state.whatsappConversaAtualId)
+    : null;
+
+  $('#content').innerHTML = `
+    ${renderWhatsappTabs('whatsapp-atendimento')}
+    <div class="wa-inbox">
+      <div class="wa-conversas-list">
+        ${state.whatsappConversas.length === 0 ? `
+          <div class="empty-state">
+            <div class="icon">📥</div>
+            <h4>Nenhuma conversa ainda</h4>
+            <p>As conversas aparecem aqui assim que um contato enviar uma mensagem pelo WhatsApp.</p>
+          </div>
+        ` : state.whatsappConversas.map(c => `
+          <div class="wa-conversa-item ${state.whatsappConversaAtualId === c.id ? 'active' : ''}" onclick="abrirConversaWhatsapp(${c.id})">
+            <div class="wa-avatar">${(c.contato_nome || c.contato_telefone || '?').charAt(0).toUpperCase()}</div>
+            <div class="wa-conversa-info">
+              <div class="wa-conversa-nome">${c.contato_nome || c.contato_telefone} <span class="wa-etapa-tag">${c.etapa_funil || 'Novo'}</span></div>
+              <div class="wa-conversa-preview">${(c.ultima_mensagem_texto || 'Sem mensagens ainda').toString().slice(0, 60)}</div>
+            </div>
+            ${c.nao_lida ? '<span class="wa-unread-dot" title="Não lida"></span>' : ''}
+          </div>
+        `).join('')}
+      </div>
+      <div class="wa-chat-panel">
+        ${conversaAtual ? renderWhatsappChatThread(conversaAtual) : `
+          <div class="empty-state">
+            <div class="icon">💬</div>
+            <h4>Selecione uma conversa</h4>
+            <p>Escolha uma conversa na lista ao lado para ver e responder as mensagens.</p>
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+
+  if (conversaAtual) carregarMensagensWhatsapp(conversaAtual.id);
+}
+
+function renderWhatsappChatThread(conversa) {
+  return `
+    <div class="wa-chat-header">
+      <div class="wa-avatar">${(conversa.contato_nome || conversa.contato_telefone || '?').charAt(0).toUpperCase()}</div>
+      <div>
+        <strong>${conversa.contato_nome || conversa.contato_telefone}</strong>
+        <div class="text-muted" style="font-size:12px;">${conversa.contato_telefone}</div>
+      </div>
+    </div>
+    <div class="wa-messages" id="waMessages"><div class="loader"></div></div>
+    <form class="wa-chat-input" onsubmit="event.preventDefault(); enviarMensagemChat(${conversa.id}); return false;">
+      <input class="form-input" id="waMensagemInput" placeholder="Digite uma mensagem..." autocomplete="off">
+      <button class="btn btn-primary" type="submit">Enviar</button>
+    </form>
+  `;
+}
+
+function abrirConversaWhatsapp(id) {
+  state.whatsappConversaAtualId = id;
+  renderWhatsappAtendimento();
+}
+
+async function carregarMensagensWhatsapp(conversaId) {
+  const mensagens = await api(`/whatsapp/conversas/${conversaId}/mensagens`) || [];
+  const wrap = $('#waMessages');
+  if (!wrap) return;
+  wrap.innerHTML = mensagens.length === 0
+    ? '<p class="text-muted" style="font-size:12px;padding:12px;">Nenhuma mensagem ainda.</p>'
+    : mensagens.map(m => `
+      <div class="wa-bubble ${m.direcao === 'saida' ? 'out' : 'in'}">
+        <div class="wa-bubble-text">${(m.texto || '').replace(/</g, '&lt;')}</div>
+        <div class="wa-bubble-meta">${new Date(m.criado_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}${m.direcao === 'saida' ? ' · ' + (m.status || '') : ''}</div>
+      </div>
+    `).join('');
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+async function enviarMensagemChat(conversaId) {
+  const input = $('#waMensagemInput');
+  const texto = input.value.trim();
+  if (!texto) return;
+  input.value = '';
+  const result = await api(`/whatsapp/conversas/${conversaId}/mensagens`, { method: 'POST', body: JSON.stringify({ texto }) });
+  if (result?.aviso) toast(result.aviso, 'error');
+  const conversas = await api('/whatsapp/conversas') || [];
+  state.whatsappConversas = conversas;
+  carregarMensagensWhatsapp(conversaId);
+}
+
+/* ---------------- CRM: contatos, funil e kanban ---------------- */
+let waCrmFiltroTimeout = null;
+function debounceCrmFiltro() {
+  clearTimeout(waCrmFiltroTimeout);
+  waCrmFiltroTimeout = setTimeout(() => renderWhatsappCrm(), 350);
+}
+function setWhatsappCrmView(v) { state.whatsappCrmView = v; renderWhatsappCrm(); }
+
+async function renderWhatsappCrm() {
+  state.whatsappEtiquetas = await api('/whatsapp/etiquetas') || [];
+
+  const params = new URLSearchParams();
+  if (state.whatsappFiltroTag) params.set('tag', state.whatsappFiltroTag);
+  if (state.whatsappFiltroEtapa) params.set('etapa', state.whatsappFiltroEtapa);
+  if (state.whatsappBusca) params.set('busca', state.whatsappBusca);
+  state.whatsappContatos = await api(`/whatsapp/contatos${params.toString() ? '?' + params.toString() : ''}`) || [];
+
+  $('#topbarActions').innerHTML = `
+    <button class="btn btn-secondary" onclick="setWhatsappCrmView('${state.whatsappCrmView === 'kanban' ? 'lista' : 'kanban'}')">${state.whatsappCrmView === 'kanban' ? '📋 Ver lista' : '🧭 Ver funil'}</button>
+    <button class="btn btn-primary" onclick="openNovoContatoWhatsappModal()">+ Novo contato</button>
+  `;
+
+  $('#content').innerHTML = `
+    ${renderWhatsappTabs('whatsapp-crm')}
+    <div class="filter-chips" style="margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+      <input class="form-input" style="max-width:220px;" placeholder="Buscar por nome ou telefone..." value="${state.whatsappBusca || ''}"
+        oninput="state.whatsappBusca=this.value; debounceCrmFiltro();">
+      <select class="form-select" style="max-width:190px;" onchange="state.whatsappFiltroEtapa=this.value; renderWhatsappCrm();">
+        <option value="">Todas as etapas</option>
+        ${FUNIL_ETAPAS.map(e => `<option value="${e}" ${state.whatsappFiltroEtapa === e ? 'selected' : ''}>${e}</option>`).join('')}
+      </select>
+      <select class="form-select" style="max-width:190px;" onchange="state.whatsappFiltroTag=this.value; renderWhatsappCrm();">
+        <option value="">Todas as etiquetas</option>
+        ${state.whatsappEtiquetas.map(t => `<option value="${t.id}" ${String(state.whatsappFiltroTag) === String(t.id) ? 'selected' : ''}>${t.nome}</option>`).join('')}
+      </select>
+    </div>
+    ${state.whatsappCrmView === 'kanban' ? renderWhatsappKanban() : renderWhatsappContatosLista()}
+  `;
+}
+
+function renderWhatsappContatosLista() {
+  if (state.whatsappContatos.length === 0) {
+    return `<div class="table-wrap"><div class="empty-state"><div class="icon">🧭</div><h4>Nenhum contato encontrado</h4><p>Cadastre um contato ou ajuste os filtros de busca.</p></div></div>`;
+  }
+  const rows = state.whatsappContatos.map(c => `
+    <tr>
+      <td><strong style="cursor:pointer;" onclick="abrirDetalheContatoWhatsapp(${c.id})">${c.nome || '(Sem nome)'}</strong><div class="text-muted" style="font-size:11px;">${c.telefone}</div></td>
+      <td>${(c.etiquetas || []).map(t => `<span class="wa-tag-pill" style="background:${t.cor}22;color:${t.cor};">${t.nome}</span>`).join(' ') || '—'}</td>
+      <td><span class="status-pill active">${c.etapa_funil || 'Novo'}</span></td>
+      <td>${fmtDate(c.atualizado_em)}</td>
+      <td>
+        <div class="action-icons">
+          <button title="Ver detalhes" onclick="abrirDetalheContatoWhatsapp(${c.id})">👁️</button>
+          <button title="Excluir" class="danger" onclick="deleteContatoWhatsapp(${c.id})">🗑️</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Contato</th><th>Etiquetas</th><th>Etapa</th><th>Último contato</th><th>Ações</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderWhatsappKanban() {
+  return `
+    <div class="wa-kanban">
+      ${FUNIL_ETAPAS.map(etapa => {
+        const contatos = state.whatsappContatos.filter(c => (c.etapa_funil || 'Novo') === etapa);
+        const idx = FUNIL_ETAPAS.indexOf(etapa);
+        return `
+        <div class="wa-kanban-col">
+          <div class="wa-kanban-col-header">${etapa} <span class="count">${contatos.length}</span></div>
+          <div class="wa-kanban-col-body">
+            ${contatos.map(c => `
+              <div class="wa-kanban-card">
+                <strong>${c.nome || c.telefone}</strong>
+                <div class="text-muted" style="font-size:11px;">${c.telefone}</div>
+                <div class="wa-kanban-actions">
+                  <button title="Mover para etapa anterior" ${idx === 0 ? 'disabled' : ''} onclick="moverEtapaContato(${c.id}, -1)">◀</button>
+                  <button title="Ver detalhes" onclick="abrirDetalheContatoWhatsapp(${c.id})">👁️</button>
+                  <button title="Mover para próxima etapa" ${idx === FUNIL_ETAPAS.length - 1 ? 'disabled' : ''} onclick="moverEtapaContato(${c.id}, 1)">▶</button>
+                </div>
+              </div>
+            `).join('') || '<p class="text-muted" style="font-size:11px;padding:6px 0;">Vazio</p>'}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+async function moverEtapaContato(id, delta) {
+  const c = state.whatsappContatos.find(x => x.id === id);
+  if (!c) return;
+  const idx = FUNIL_ETAPAS.indexOf(c.etapa_funil || 'Novo');
+  const novoIdx = idx + delta;
+  if (novoIdx < 0 || novoIdx >= FUNIL_ETAPAS.length) return;
+  await api(`/whatsapp/contatos/${id}/etapa`, { method: 'PUT', body: JSON.stringify({ etapa_funil: FUNIL_ETAPAS[novoIdx] }) });
+  renderWhatsappCrm();
+}
+
+function openNovoContatoWhatsappModal() {
+  openModal(`
+    <div class="modal-header"><h3>Novo contato</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <form id="formContatoWhatsapp">
+        <div class="form-group"><label class="form-label">Nome</label><input class="form-input" name="nome" placeholder="Ex: João Silva"></div>
+        <div class="form-group"><label class="form-label">Telefone (com DDI, só números)</label><input class="form-input" name="telefone" placeholder="Ex: 5588900000000" required></div>
+        <div class="form-group">
+          <label class="form-label">Etapa do funil</label>
+          <select class="form-select" name="etapa_funil">
+            ${FUNIL_ETAPAS.map(e => `<option value="${e}">${e}</option>`).join('')}
+          </select>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="submitContatoWhatsapp()">Salvar</button>
+    </div>
+  `);
+}
+async function submitContatoWhatsapp() {
+  const form = $('#formContatoWhatsapp');
+  const data = Object.fromEntries(new FormData(form));
+  const result = await api('/whatsapp/contatos', { method: 'POST', body: JSON.stringify(data) });
+  if (result) { toast('Contato cadastrado!'); closeModal(); renderWhatsappCrm(); }
+}
+async function deleteContatoWhatsapp(id) {
+  if (!confirm('Deseja realmente excluir este contato?')) return;
+  const result = await api(`/whatsapp/contatos/${id}`, { method: 'DELETE' });
+  if (result) { toast('Contato removido'); renderWhatsappCrm(); }
+}
+
+async function abrirDetalheContatoWhatsapp(id) {
+  const lista = await api('/whatsapp/contatos') || [];
+  const contato = lista.find(c => c.id === id);
+  if (!contato) return;
+  state.whatsappEtiquetas = state.whatsappEtiquetas.length ? state.whatsappEtiquetas : await api('/whatsapp/etiquetas') || [];
+  const notas = await api(`/whatsapp/contatos/${id}/notas`) || [];
+  renderDetalheContatoModal(contato, notas);
+}
+
+function renderDetalheContatoModal(contato, notas) {
+  openModal(`
+    <div class="modal-header"><h3>${contato.nome || contato.telefone}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Etapa do funil</label>
+        <select class="form-select" onchange="mudarEtapaContatoModal(${contato.id}, this.value)">
+          ${FUNIL_ETAPAS.map(e => `<option value="${e}" ${contato.etapa_funil === e ? 'selected' : ''}>${e}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Etiquetas</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${state.whatsappEtiquetas.length === 0 ? '<span class="text-muted" style="font-size:12px;">Nenhuma etiqueta cadastrada ainda.</span>' : state.whatsappEtiquetas.map(t => {
+            const ativo = (contato.etiquetas || []).some(ct => ct.id === t.id);
+            return `<span class="wa-tag-pill selectable ${ativo ? 'active' : ''}" style="--tag-color:${t.cor};" onclick="toggleEtiquetaContato(${contato.id}, ${t.id}, ${!ativo})">${t.nome}</span>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Anotações (histórico de atividade)</label>
+        <div class="wa-notas-list">
+          ${notas.length === 0 ? '<p class="text-muted" style="font-size:12px;">Nenhuma anotação ainda.</p>' : notas.map(n => `
+            <div class="wa-nota-item">
+              <div class="wa-nota-texto">${n.texto}</div>
+              <div class="wa-nota-quando">${timeAgo(n.criado_em)}</div>
+            </div>
+          `).join('')}
+        </div>
+        <textarea class="form-textarea" id="novaNotaContato" placeholder="Adicionar uma anotação..." style="margin-top:10px;"></textarea>
+        <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="adicionarNotaContato(${contato.id})">+ Adicionar anotação</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Fechar</button>
+    </div>
+  `);
+}
+
+async function mudarEtapaContatoModal(id, etapa) {
+  await api(`/whatsapp/contatos/${id}/etapa`, { method: 'PUT', body: JSON.stringify({ etapa_funil: etapa }) });
+  toast('Etapa do funil atualizada');
+}
+
+async function toggleEtiquetaContato(contatoId, etiquetaId, ativo) {
+  const contato = await api(`/whatsapp/contatos/${contatoId}/etiquetas`, { method: 'POST', body: JSON.stringify({ etiqueta_id: etiquetaId, ativo }) });
+  const notas = await api(`/whatsapp/contatos/${contatoId}/notas`) || [];
+  if (contato) renderDetalheContatoModal(contato, notas);
+}
+
+async function adicionarNotaContato(contatoId) {
+  const campo = $('#novaNotaContato');
+  const texto = campo.value.trim();
+  if (!texto) return;
+  await api(`/whatsapp/contatos/${contatoId}/notas`, { method: 'POST', body: JSON.stringify({ texto }) });
+  const lista = await api('/whatsapp/contatos') || [];
+  const contato = lista.find(c => c.id === contatoId);
+  const notas = await api(`/whatsapp/contatos/${contatoId}/notas`) || [];
+  toast('Anotação adicionada');
+  if (contato) renderDetalheContatoModal(contato, notas);
+}
+
+/* ---------------- Etiquetas ---------------- */
+async function renderWhatsappEtiquetas() {
+  state.whatsappEtiquetas = await api('/whatsapp/etiquetas') || [];
+  $('#topbarActions').innerHTML = `<button class="btn btn-primary" onclick="openNovaEtiquetaModal()">+ Nova etiqueta</button>`;
+
+  const rows = state.whatsappEtiquetas.map(t => `
+    <tr>
+      <td><span class="wa-tag-pill" style="background:${t.cor}22;color:${t.cor};">${t.nome}</span></td>
+      <td><span style="display:inline-block;width:16px;height:16px;border-radius:5px;background:${t.cor};border:1px solid var(--border);vertical-align:middle;margin-right:6px;"></span>${t.cor}</td>
+      <td>
+        <div class="action-icons">
+          <button title="Editar" onclick="editEtiqueta(${t.id})">✏️</button>
+          <button title="Excluir" class="danger" onclick="deleteEtiqueta(${t.id})">🗑️</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  $('#content').innerHTML = `
+    ${renderWhatsappTabs('whatsapp-etiquetas')}
+    <div class="table-wrap">
+      ${state.whatsappEtiquetas.length === 0 ? `
+        <div class="empty-state"><div class="icon">🏷️</div><h4>Nenhuma etiqueta criada</h4><p>Crie etiquetas para organizar os contatos do CRM (ex: Cliente VIP, Aguardando resposta).</p></div>
+      ` : `<table><thead><tr><th>Etiqueta</th><th>Cor</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>`}
+    </div>
+  `;
+}
+
+function openNovaEtiquetaModal() {
+  openModal(`
+    <div class="modal-header"><h3>Nova etiqueta</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <form id="formEtiqueta">
+        <div class="form-group"><label class="form-label">Nome</label><input class="form-input" name="nome" placeholder="Ex: Cliente VIP" required></div>
+        <div class="form-group"><label class="form-label">Cor</label><input class="form-input" type="color" name="cor" value="#6C5CE0"></div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="submitEtiqueta()">Salvar</button>
+    </div>
+  `);
+}
+async function submitEtiqueta() {
+  const form = $('#formEtiqueta');
+  const data = Object.fromEntries(new FormData(form));
+  const result = await api('/whatsapp/etiquetas', { method: 'POST', body: JSON.stringify(data) });
+  if (result) { toast('Etiqueta criada!'); closeModal(); renderWhatsappEtiquetas(); }
+}
+function editEtiqueta(id) {
+  const t = state.whatsappEtiquetas.find(x => x.id === id);
+  if (!t) return;
+  openModal(`
+    <div class="modal-header"><h3>Editar etiqueta</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <form id="formEtiqueta">
+        <div class="form-group"><label class="form-label">Nome</label><input class="form-input" name="nome" value="${t.nome}" required></div>
+        <div class="form-group"><label class="form-label">Cor</label><input class="form-input" type="color" name="cor" value="${t.cor}"></div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="submitEditEtiqueta(${id})">Salvar</button>
+    </div>
+  `);
+}
+async function submitEditEtiqueta(id) {
+  const form = $('#formEtiqueta');
+  const data = Object.fromEntries(new FormData(form));
+  const result = await api(`/whatsapp/etiquetas/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  if (result) { toast('Etiqueta atualizada!'); closeModal(); renderWhatsappEtiquetas(); }
+}
+async function deleteEtiqueta(id) {
+  if (!confirm('Deseja realmente excluir esta etiqueta?')) return;
+  const result = await api(`/whatsapp/etiquetas/${id}`, { method: 'DELETE' });
+  if (result) { toast('Etiqueta removida'); renderWhatsappEtiquetas(); }
+}
+
+/* ---------------- Modelos de mensagem (templates) ---------------- */
+const WHATSAPP_TEMPLATE_CATEGORIAS = ['Marketing', 'Utilidade', 'Autenticação'];
+
+async function renderWhatsappTemplates() {
+  state.whatsappTemplates = await api('/whatsapp/templates') || [];
+  $('#topbarActions').innerHTML = `<button class="btn btn-primary" onclick="openNovoTemplateModal()">+ Novo modelo</button>`;
+
+  const rows = state.whatsappTemplates.map(t => `
+    <tr>
+      <td><strong>${t.nome}</strong><div class="text-muted" style="font-size:11px;">${t.corpo.slice(0, 70)}${t.corpo.length > 70 ? '…' : ''}</div></td>
+      <td>${t.categoria || '—'}</td>
+      <td>${timeAgo(t.criado_em)}</td>
+      <td>
+        <div class="action-icons">
+          <button title="Editar" onclick="editTemplateWhatsapp(${t.id})">✏️</button>
+          <button title="Excluir" class="danger" onclick="deleteTemplateWhatsapp(${t.id})">🗑️</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  $('#content').innerHTML = `
+    ${renderWhatsappTabs('whatsapp-templates')}
+    <div class="table-wrap">
+      ${state.whatsappTemplates.length === 0 ? `
+        <div class="empty-state"><div class="icon">📄</div><h4>Nenhum modelo criado</h4><p>Crie modelos de mensagem reutilizáveis, com variáveis como {{nome}}. Depois é possível enviar esses modelos para aprovação da Meta.</p></div>
+      ` : `<table><thead><tr><th>Modelo</th><th>Categoria</th><th>Criado em</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>`}
+    </div>
+  `;
+}
+
+function openNovoTemplateModal() {
+  openModal(`
+    <div class="modal-header"><h3>Novo modelo de mensagem</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <form id="formTemplate">
+        <div class="form-group"><label class="form-label">Nome</label><input class="form-input" name="nome" placeholder="Ex: boas_vindas" required></div>
+        <div class="form-group">
+          <label class="form-label">Categoria</label>
+          <select class="form-select" name="categoria">${WHATSAPP_TEMPLATE_CATEGORIAS.map(c => `<option value="${c}">${c}</option>`).join('')}</select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Corpo da mensagem</label>
+          <textarea class="form-textarea" name="corpo" placeholder="Ex: Olá {{nome}}, sua proposta está pronta!" required></textarea>
+          <p class="form-hint">Use {{variavel}} para campos dinâmicos, ex: {{nome}}</p>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="submitTemplateWhatsapp()">Salvar</button>
+    </div>
+  `);
+}
+async function submitTemplateWhatsapp() {
+  const form = $('#formTemplate');
+  const data = Object.fromEntries(new FormData(form));
+  const result = await api('/whatsapp/templates', { method: 'POST', body: JSON.stringify(data) });
+  if (result) { toast('Modelo criado!'); closeModal(); renderWhatsappTemplates(); }
+}
+function editTemplateWhatsapp(id) {
+  const t = state.whatsappTemplates.find(x => x.id === id);
+  if (!t) return;
+  openModal(`
+    <div class="modal-header"><h3>Editar modelo</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <form id="formTemplate">
+        <div class="form-group"><label class="form-label">Nome</label><input class="form-input" name="nome" value="${t.nome}" required></div>
+        <div class="form-group">
+          <label class="form-label">Categoria</label>
+          <select class="form-select" name="categoria">${WHATSAPP_TEMPLATE_CATEGORIAS.map(c => `<option value="${c}" ${t.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Corpo da mensagem</label>
+          <textarea class="form-textarea" name="corpo" required>${t.corpo}</textarea>
+          <p class="form-hint">Use {{variavel}} para campos dinâmicos, ex: {{nome}}</p>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="submitEditTemplateWhatsapp(${id})">Salvar</button>
+    </div>
+  `);
+}
+async function submitEditTemplateWhatsapp(id) {
+  const form = $('#formTemplate');
+  const data = Object.fromEntries(new FormData(form));
+  const result = await api(`/whatsapp/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  if (result) { toast('Modelo atualizado!'); closeModal(); renderWhatsappTemplates(); }
+}
+async function deleteTemplateWhatsapp(id) {
+  if (!confirm('Deseja realmente excluir este modelo?')) return;
+  const result = await api(`/whatsapp/templates/${id}`, { method: 'DELETE' });
+  if (result) { toast('Modelo removido'); renderWhatsappTemplates(); }
+}
+
+/* ---------------- Métricas de conversão ---------------- */
+async function renderWhatsappMetricas() {
+  $('#topbarActions').innerHTML = '';
+  const metricas = await api('/whatsapp/metricas') || { etapas: FUNIL_ETAPAS, por_etapa: {}, contatos_por_dia: [] };
+  const porEtapa = metricas.por_etapa || {};
+  const maxEtapa = Math.max(1, ...Object.values(porEtapa));
+
+  const conversoes = [];
+  for (let i = 0; i < FUNIL_ETAPAS.length - 1; i++) {
+    if (FUNIL_ETAPAS[i] === 'Perdido') continue;
+    const atual = porEtapa[FUNIL_ETAPAS[i]] || 0;
+    const prox = porEtapa[FUNIL_ETAPAS[i + 1]] || 0;
+    conversoes.push({ de: FUNIL_ETAPAS[i], para: FUNIL_ETAPAS[i + 1], taxa: atual ? Math.round((prox / atual) * 100) : 0 });
+  }
+
+  const porDiaMap = {};
+  (metricas.contatos_por_dia || []).forEach(l => { porDiaMap[l.dia] = l.c; });
+  const ultimos30 = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const chave = d.toISOString().slice(0, 10);
+    ultimos30.push({ dia: chave, c: porDiaMap[chave] || 0 });
+  }
+  const maxDia = Math.max(1, ...ultimos30.map(x => x.c));
+
+  $('#content').innerHTML = `
+    ${renderWhatsappTabs('whatsapp-metricas')}
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><span class="card-title">Contatos por etapa do funil</span></div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${FUNIL_ETAPAS.map(e => `
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>${e}</span><strong>${porEtapa[e] || 0}</strong></div>
+            <div style="background:var(--bg);border-radius:6px;height:10px;overflow:hidden;">
+              <div style="height:100%;width:${Math.round((porEtapa[e] || 0) / maxEtapa * 100)}%;background:var(--primary);"></div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><span class="card-title">Taxa de conversão entre etapas</span></div>
+      <div class="grid grid-3" style="gap:14px;">
+        ${conversoes.map(c => `
+          <div style="background:var(--bg);border-radius:var(--radius-sm);padding:14px;text-align:center;">
+            <div class="text-muted" style="font-size:11px;">${c.de} → ${c.para}</div>
+            <div class="stat-value" style="font-size:22px;">${c.taxa}%</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Novos contatos (últimos 30 dias)</span></div>
+      <div style="display:flex;align-items:flex-end;gap:2px;height:100px;">
+        ${ultimos30.map(x => `<div style="flex:1;background:${x.c ? 'var(--primary)' : 'var(--bg)'};height:${Math.max(4, Math.round(x.c / maxDia * 100))}%;border-radius:2px 2px 0 0;" title="${x.dia}: ${x.c}"></div>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+/* ---------------- Configurações da API do WhatsApp Cloud ---------------- */
+async function renderWhatsappConfig() {
+  $('#topbarActions').innerHTML = '';
+  state.whatsappConfig = await api('/whatsapp/config') || {};
+  const c = state.whatsappConfig;
+
+  $('#content').innerHTML = `
+    ${renderWhatsappTabs('whatsapp-config')}
+    <div class="card" style="max-width:640px;">
+      <div class="card-header"><span class="card-title">Configuração da API do WhatsApp Cloud (Meta)</span></div>
+      <p class="text-muted" style="font-size:12px;margin-bottom:16px;">Esses dados são obtidos no seu app do WhatsApp Business, no Meta for Developers.</p>
+      <form id="formWhatsappConfig">
+        <div class="form-group">
+          <label class="form-label">Phone Number ID</label>
+          <input class="form-input" name="phone_number_id" value="${c.phone_number_id || ''}" placeholder="Ex: 123456789012345">
+        </div>
+        <div class="form-group">
+          <label class="form-label">WhatsApp Business Account ID (WABA)</label>
+          <input class="form-input" name="waba_id" value="${c.waba_id || ''}" placeholder="Ex: 987654321098765">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Access Token (token permanente)</label>
+          <input class="form-input" type="password" name="access_token" value="${c.access_token || ''}" placeholder="EAAG...">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Webhook Verify Token</label>
+          <input class="form-input" name="webhook_verify_token" value="${c.webhook_verify_token || ''}" placeholder="Defina uma palavra-chave qualquer">
+          <p class="form-hint">Use o mesmo valor ao configurar o Webhook no painel da Meta. URL do webhook: <code>${location.origin}/api/public/whatsapp/webhook</code></p>
+        </div>
+      </form>
+    </div>
+    <button class="btn btn-primary" style="margin-top:16px;" onclick="salvarWhatsappConfig()">💾 Salvar configuração</button>
+  `;
+}
+async function salvarWhatsappConfig() {
+  const form = $('#formWhatsappConfig');
+  const data = Object.fromEntries(new FormData(form));
+  const result = await api('/whatsapp/config', { method: 'PUT', body: JSON.stringify(data) });
+  if (result) { state.whatsappConfig = result; toast('Configuração salva!'); }
 }
 
 /* ---------------- Modal: Minha Conta ---------------- */

@@ -208,4 +208,95 @@ db.exec(`
   );
 `);
 
+/* ============================================================
+   Relatórios — histórico de status das telas, gravado
+   periodicamente pelo servidor (ver registrarStatusTelas em
+   server.js) pra permitir calcular disponibilidade (uptime) por
+   tela ao longo de um período, não só o status "agora".
+   ============================================================ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS telas_status_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tela_id INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    registrado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tela_id) REFERENCES telas(id) ON DELETE CASCADE
+  );
+`);
+
+/* ============================================================
+   WhatsApp CRM — atendimento, contatos, etiquetas, funil de
+   vendas, modelos de mensagem e configuração da API do WhatsApp
+   Cloud (Meta). Os textos ficam em português para acompanhar o
+   restante do domínio do sistema.
+   ============================================================ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS whatsapp_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone_number_id TEXT,
+    waba_id TEXT,
+    access_token TEXT,
+    webhook_verify_token TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS whatsapp_contatos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telefone TEXT UNIQUE NOT NULL,
+    nome TEXT,
+    etapa_funil TEXT DEFAULT 'Novo',
+    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS whatsapp_etiquetas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT NOT NULL,
+    cor TEXT DEFAULT '#6C5CE0'
+  );
+
+  CREATE TABLE IF NOT EXISTS whatsapp_contato_etiquetas (
+    contato_id INTEGER NOT NULL,
+    etiqueta_id INTEGER NOT NULL,
+    PRIMARY KEY (contato_id, etiqueta_id),
+    FOREIGN KEY (contato_id) REFERENCES whatsapp_contatos(id) ON DELETE CASCADE,
+    FOREIGN KEY (etiqueta_id) REFERENCES whatsapp_etiquetas(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS whatsapp_notas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contato_id INTEGER NOT NULL,
+    texto TEXT NOT NULL,
+    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (contato_id) REFERENCES whatsapp_contatos(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS whatsapp_conversas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contato_id INTEGER NOT NULL,
+    ultima_mensagem_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+    nao_lida INTEGER DEFAULT 0,
+    FOREIGN KEY (contato_id) REFERENCES whatsapp_contatos(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS whatsapp_mensagens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversa_id INTEGER NOT NULL,
+    direcao TEXT NOT NULL,
+    texto TEXT,
+    status TEXT DEFAULT 'pendente',
+    wa_message_id TEXT,
+    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversa_id) REFERENCES whatsapp_conversas(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS whatsapp_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT NOT NULL,
+    categoria TEXT,
+    corpo TEXT NOT NULL,
+    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
 module.exports = db;

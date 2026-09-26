@@ -216,6 +216,25 @@ app.get('/api/telas/:id', requireApiAuth, (req, res) => {
   res.json(serializarTela(tela));
 });
 
+/* ============================================================
+   Relatórios — logger periódico de status das telas
+   Grava uma "foto" do status (online/offline) de cada tela a
+   cada 5 minutos em telas_status_log, pra permitir calcular a
+   disponibilidade (uptime) por tela ao longo de um período em
+   /api/relatorios/disponibilidade, e não só o status "agora".
+   ============================================================ */
+function registrarStatusTelas() {
+  const telas = db.prepare(`SELECT id, ultima_comunicacao FROM telas`).all();
+  if (!telas.length) return;
+  const insert = db.prepare(`INSERT INTO telas_status_log (tela_id, status) VALUES (?, ?)`);
+  const gravarTodas = db.transaction((lista) => {
+    lista.forEach(t => insert.run(t.id, estaOnline(t) ? 'online' : 'offline'));
+  });
+  gravarTodas(telas);
+}
+registrarStatusTelas();
+setInterval(registrarStatusTelas, 5 * 60 * 1000);
+
 /* Campos do cadastro completo de tela (Info, Localização, Métricas, Configurações) */
 const TELA_CAMPOS = [
   'nome', 'localizacao', 'orientacao', 'grupo_id', 'tipo_dispositivo', 'imagem',
@@ -716,6 +735,440 @@ app.get('/api/public/midias', (req, res) => {
     .filter(m => m.url);
 
   res.json(resultado);
+});
+
+/* ============================================================
+   API — Relatórios (visão geral, exibições e disponibilidade)
+   ============================================================ */
+app.get('/api/relatorios/overview', requireApiAuth, (req, res) => {
+  const telas_total = db.prepare(`SELECT COUNT(*) as c FROM telas`).get().c;
+  const telas_online = db.prepare(`SELECT COUNT(*) as c FROM telas WHERE ultima_comunicacao >= datetime('now', ?)`).get(`-${ONLINE_LIMIAR_MINUTOS} minutes`).c;
+  const clientes_total = db.prepare(`SELECT COUNT(*) as c FROM clientes`).get().c;
+  const campanhas_ativas = db.prepare(`SELECT COUNT(*) as c FROM campanhas WHERE status = 'ativa'`).get().c;
+  const midias_total = db.prepare(`SELECT COUNT(*) as c FROM midias`).get().c;
+
+  res.json({
+    telas_total,
+    telas_online,
+    telas_offline: telas_total - telas_online,
+    clientes_total,
+    campanhas_ativas,
+    midias_total,
+  });
+});
+
+/* Exibições por tela num período (7 ou 30 dias) — agregado em SQL, sem N+1 */
+app.get('/api/relatorios/exibicoes', requireApiAuth, (req, res) => {
+  const dias = Number(req.query.dias) === 30 ? 30 : 7;
+  const linhas = db.prepare(`
+    SELECT t.id as tela_id, t.nome as tela_nome,
+      COUNT(e.id) as total_exibicoes,
+      MAX(e.exibido_em) as ultima_exibicao
+    FROM telas t
+    LEFT JOIN exibicoes e ON e.tela_id = t.id AND e.exibido_em >= datetime('now', ?)
+    GROUP BY t.id
+    ORDER BY total_exibicoes DESC, t.nome ASC
+  `).all(`-${dias} days`);
+
+  res.json({ dias, telas: linhas });
+});
+
+/* Taxa de disponibilidade (uptime) por tela num período, calculada a partir
+   do histórico gravado em telas_status_log (ver registrarStatusTelas acima).
+   Enquanto o histórico ainda não cobre o período pedido (ex.: logo após
+   atualizar pra esta versão), cai pra um modo "instantâneo": mostra o
+   status atual (online = 100%, offline = 0%) em vez de uma taxa real ao
+   longo do tempo, e avisa o front-end disso em `modo`. */
+app.get('/api/relatorios/disponibilidade', requireApiAuth, (req, res) => {
+  const dias = Number(req.query.dias) === 30 ? 30 : 7;
+  const totalRegistros = db.prepare(`SELECT COUNT(*) as c FROM telas_status_log WHERE registrado_em >= datetime('now', ?)`).get(`-${dias} days`).c;
+
+  if (!totalRegistros) {
+    const telas = db.prepare(`SELECT * FROM telas ORDER BY nome ASC`).all().map(serializarTela);
+    return res.json({
+      dias,
+      modo: 'instantaneo',
+      telas: telas.map(t => ({
+        tela_id: t.id,
+        tela_nome: t.nome,
+        disponibilidade_pct: t.status === 'online' ? 100 : 0,
+      })),
+    });
+  }
+
+  const linhas = db.prepare(`
+    SELECT t.id as tela_id, t.nome as tela_nome,
+      COUNT(l.id) as total_registros,
+      SUM(CASE WHEN l.status = 'online' THEN 1 ELSE 0 END) as registros_online
+    FROM telas t
+    LEFT JOIN telas_status_log l ON l.tela_id = t.id AND l.registrado_em >= datetime('now', ?)
+    GROUP BY t.id
+    ORDER BY t.nome ASC
+  `).all(`-${dias} days`);
+
+  res.json({
+    dias,
+    modo: 'historico',
+    telas: linhas.map(l => ({
+      tela_id: l.tela_id,
+      tela_nome: l.tela_nome,
+      disponibilidade_pct: l.total_registros ? Math.round((l.registros_online / l.total_registros) * 100) : null,
+    })),
+  });
+});
+
+/* ============================================================
+   API — WhatsApp CRM
+   ============================================================ */
+const WHATSAPP_FUNIL_ETAPAS = ['Novo', 'Em conversa', 'Proposta enviada', 'Fechado', 'Perdido'];
+
+function getWhatsappConfig() {
+  return db.prepare(`SELECT * FROM whatsapp_config ORDER BY id DESC LIMIT 1`).get() || null;
+}
+
+function serializarContatoWhatsapp(contato) {
+  if (!contato) return contato;
+  const etiquetas = db.prepare(`
+    SELECT e.* FROM whatsapp_etiquetas e
+    JOIN whatsapp_contato_etiquetas ce ON ce.etiqueta_id = e.id
+    WHERE ce.contato_id = ?
+    ORDER BY e.nome ASC
+  `).all(contato.id);
+  return { ...contato, etiquetas };
+}
+
+/* Envia uma mensagem de texto via WhatsApp Cloud API (Graph API da Meta).
+   Não quebra se a config estiver vazia/placeholder — só reporta erro. */
+async function enviarMensagemWhatsapp(telefone, texto) {
+  const config = getWhatsappConfig();
+  if (!config || !config.phone_number_id || !config.access_token) {
+    return { ok: false, error: 'WhatsApp não configurado — vá em Configurações' };
+  }
+  try {
+    const resp = await fetch(`https://graph.facebook.com/v20.0/${config.phone_number_id}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.access_token}`,
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: telefone,
+        type: 'text',
+        text: { body: texto },
+      }),
+    });
+    const dados = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      return { ok: false, error: dados?.error?.message || 'Falha ao enviar mensagem pela API do WhatsApp' };
+    }
+    return { ok: true, wa_message_id: dados?.messages?.[0]?.id || null };
+  } catch (err) {
+    return { ok: false, error: 'Erro de conexão com a API do WhatsApp' };
+  }
+}
+
+/* ---------- Configuração ---------- */
+app.get('/api/whatsapp/config', requireApiAuth, (req, res) => {
+  res.json(getWhatsappConfig() || {
+    phone_number_id: '', waba_id: '', access_token: '', webhook_verify_token: '',
+  });
+});
+
+app.put('/api/whatsapp/config', requireApiAuth, (req, res) => {
+  const { phone_number_id, waba_id, access_token, webhook_verify_token } = req.body;
+  const existente = getWhatsappConfig();
+
+  if (existente) {
+    db.prepare(`
+      UPDATE whatsapp_config SET phone_number_id = ?, waba_id = ?, access_token = ?, webhook_verify_token = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(phone_number_id || '', waba_id || '', access_token || '', webhook_verify_token || '', existente.id);
+  } else {
+    db.prepare(`
+      INSERT INTO whatsapp_config (phone_number_id, waba_id, access_token, webhook_verify_token)
+      VALUES (?, ?, ?, ?)
+    `).run(phone_number_id || '', waba_id || '', access_token || '', webhook_verify_token || '');
+  }
+
+  res.json(getWhatsappConfig());
+});
+
+/* ---------- Contatos ---------- */
+app.get('/api/whatsapp/contatos', requireApiAuth, (req, res) => {
+  const { tag, etapa, busca } = req.query;
+  let sql = `SELECT DISTINCT c.* FROM whatsapp_contatos c`;
+  const where = [];
+  const params = [];
+
+  if (tag) {
+    sql += ` JOIN whatsapp_contato_etiquetas ce ON ce.contato_id = c.id`;
+    where.push(`ce.etiqueta_id = ?`);
+    params.push(tag);
+  }
+  if (etapa) { where.push(`c.etapa_funil = ?`); params.push(etapa); }
+  if (busca) { where.push(`(c.nome LIKE ? OR c.telefone LIKE ?)`); params.push(`%${busca}%`, `%${busca}%`); }
+  if (where.length) sql += ` WHERE ` + where.join(' AND ');
+  sql += ` ORDER BY c.atualizado_em DESC`;
+
+  const contatos = db.prepare(sql).all(...params);
+  res.json(contatos.map(serializarContatoWhatsapp));
+});
+
+app.post('/api/whatsapp/contatos', requireApiAuth, (req, res) => {
+  const { telefone, nome, etapa_funil } = req.body;
+  if (!telefone) return res.status(400).json({ error: 'Telefone é obrigatório' });
+
+  try {
+    const stmt = db.prepare(`INSERT INTO whatsapp_contatos (telefone, nome, etapa_funil) VALUES (?, ?, ?)`);
+    const result = stmt.run(String(telefone).trim(), nome || null, etapa_funil || 'Novo');
+    const contato = db.prepare(`SELECT * FROM whatsapp_contatos WHERE id = ?`).get(result.lastInsertRowid);
+    res.status(201).json(serializarContatoWhatsapp(contato));
+  } catch (err) {
+    res.status(400).json({ error: 'Já existe um contato cadastrado com esse telefone' });
+  }
+});
+
+app.put('/api/whatsapp/contatos/:id', requireApiAuth, (req, res) => {
+  const existing = db.prepare(`SELECT * FROM whatsapp_contatos WHERE id = ?`).get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Contato não encontrado' });
+
+  const { nome, telefone, etapa_funil } = req.body;
+  db.prepare(`
+    UPDATE whatsapp_contatos SET nome = ?, telefone = ?, etapa_funil = ?, atualizado_em = CURRENT_TIMESTAMP WHERE id = ?
+  `).run(nome ?? existing.nome, telefone ?? existing.telefone, etapa_funil ?? existing.etapa_funil, req.params.id);
+
+  res.json(serializarContatoWhatsapp(db.prepare(`SELECT * FROM whatsapp_contatos WHERE id = ?`).get(req.params.id)));
+});
+
+app.put('/api/whatsapp/contatos/:id/etapa', requireApiAuth, (req, res) => {
+  const { etapa_funil } = req.body;
+  if (!WHATSAPP_FUNIL_ETAPAS.includes(etapa_funil)) return res.status(400).json({ error: 'Etapa de funil inválida' });
+
+  const existing = db.prepare(`SELECT * FROM whatsapp_contatos WHERE id = ?`).get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Contato não encontrado' });
+
+  db.prepare(`UPDATE whatsapp_contatos SET etapa_funil = ?, atualizado_em = CURRENT_TIMESTAMP WHERE id = ?`).run(etapa_funil, req.params.id);
+  res.json(serializarContatoWhatsapp(db.prepare(`SELECT * FROM whatsapp_contatos WHERE id = ?`).get(req.params.id)));
+});
+
+app.delete('/api/whatsapp/contatos/:id', requireApiAuth, (req, res) => {
+  db.prepare(`DELETE FROM whatsapp_contatos WHERE id = ?`).run(req.params.id);
+  res.json({ success: true });
+});
+
+/* Cria (ou retorna, se já existir) a conversa desse contato — usado pelo
+   painel de Atendimento antes de abrir o chat ou enviar a 1ª mensagem. */
+app.post('/api/whatsapp/contatos/:id/conversa', requireApiAuth, (req, res) => {
+  const contato = db.prepare(`SELECT * FROM whatsapp_contatos WHERE id = ?`).get(req.params.id);
+  if (!contato) return res.status(404).json({ error: 'Contato não encontrado' });
+
+  let conversa = db.prepare(`SELECT * FROM whatsapp_conversas WHERE contato_id = ?`).get(contato.id);
+  if (!conversa) {
+    const result = db.prepare(`INSERT INTO whatsapp_conversas (contato_id) VALUES (?)`).run(contato.id);
+    conversa = db.prepare(`SELECT * FROM whatsapp_conversas WHERE id = ?`).get(result.lastInsertRowid);
+  }
+  res.json(conversa);
+});
+
+/* ---------- Anotações do contato (log de atividade, não editável) ---------- */
+app.get('/api/whatsapp/contatos/:id/notas', requireApiAuth, (req, res) => {
+  res.json(db.prepare(`SELECT * FROM whatsapp_notas WHERE contato_id = ? ORDER BY criado_em DESC`).all(req.params.id));
+});
+
+app.post('/api/whatsapp/contatos/:id/notas', requireApiAuth, (req, res) => {
+  const { texto } = req.body;
+  if (!texto || !texto.trim()) return res.status(400).json({ error: 'Texto da anotação é obrigatório' });
+
+  const result = db.prepare(`INSERT INTO whatsapp_notas (contato_id, texto) VALUES (?, ?)`).run(req.params.id, texto.trim());
+  res.status(201).json(db.prepare(`SELECT * FROM whatsapp_notas WHERE id = ?`).get(result.lastInsertRowid));
+});
+
+/* ---------- Etiquetas ---------- */
+app.get('/api/whatsapp/etiquetas', requireApiAuth, (req, res) => {
+  res.json(db.prepare(`SELECT * FROM whatsapp_etiquetas ORDER BY nome ASC`).all());
+});
+
+app.post('/api/whatsapp/etiquetas', requireApiAuth, (req, res) => {
+  const { nome, cor } = req.body;
+  if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+
+  const result = db.prepare(`INSERT INTO whatsapp_etiquetas (nome, cor) VALUES (?, ?)`).run(nome, cor || '#6C5CE0');
+  res.status(201).json(db.prepare(`SELECT * FROM whatsapp_etiquetas WHERE id = ?`).get(result.lastInsertRowid));
+});
+
+app.put('/api/whatsapp/etiquetas/:id', requireApiAuth, (req, res) => {
+  const existing = db.prepare(`SELECT * FROM whatsapp_etiquetas WHERE id = ?`).get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Etiqueta não encontrada' });
+
+  const { nome, cor } = req.body;
+  db.prepare(`UPDATE whatsapp_etiquetas SET nome = ?, cor = ? WHERE id = ?`).run(nome ?? existing.nome, cor ?? existing.cor, req.params.id);
+  res.json(db.prepare(`SELECT * FROM whatsapp_etiquetas WHERE id = ?`).get(req.params.id));
+});
+
+app.delete('/api/whatsapp/etiquetas/:id', requireApiAuth, (req, res) => {
+  db.prepare(`DELETE FROM whatsapp_etiquetas WHERE id = ?`).run(req.params.id);
+  res.json({ success: true });
+});
+
+app.post('/api/whatsapp/contatos/:id/etiquetas', requireApiAuth, (req, res) => {
+  const { etiqueta_id, ativo } = req.body;
+  if (ativo) {
+    db.prepare(`INSERT OR IGNORE INTO whatsapp_contato_etiquetas (contato_id, etiqueta_id) VALUES (?, ?)`).run(req.params.id, etiqueta_id);
+  } else {
+    db.prepare(`DELETE FROM whatsapp_contato_etiquetas WHERE contato_id = ? AND etiqueta_id = ?`).run(req.params.id, etiqueta_id);
+  }
+  res.json(serializarContatoWhatsapp(db.prepare(`SELECT * FROM whatsapp_contatos WHERE id = ?`).get(req.params.id)));
+});
+
+/* ---------- Modelos de mensagem (templates) ---------- */
+app.get('/api/whatsapp/templates', requireApiAuth, (req, res) => {
+  res.json(db.prepare(`SELECT * FROM whatsapp_templates ORDER BY criado_em DESC`).all());
+});
+
+app.post('/api/whatsapp/templates', requireApiAuth, (req, res) => {
+  const { nome, categoria, corpo } = req.body;
+  if (!nome || !corpo) return res.status(400).json({ error: 'Nome e corpo da mensagem são obrigatórios' });
+
+  const result = db.prepare(`INSERT INTO whatsapp_templates (nome, categoria, corpo) VALUES (?, ?, ?)`).run(nome, categoria || null, corpo);
+  res.status(201).json(db.prepare(`SELECT * FROM whatsapp_templates WHERE id = ?`).get(result.lastInsertRowid));
+});
+
+app.put('/api/whatsapp/templates/:id', requireApiAuth, (req, res) => {
+  const existing = db.prepare(`SELECT * FROM whatsapp_templates WHERE id = ?`).get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Modelo não encontrado' });
+
+  const { nome, categoria, corpo } = req.body;
+  db.prepare(`UPDATE whatsapp_templates SET nome = ?, categoria = ?, corpo = ? WHERE id = ?`).run(
+    nome ?? existing.nome, categoria ?? existing.categoria, corpo ?? existing.corpo, req.params.id
+  );
+  res.json(db.prepare(`SELECT * FROM whatsapp_templates WHERE id = ?`).get(req.params.id));
+});
+
+app.delete('/api/whatsapp/templates/:id', requireApiAuth, (req, res) => {
+  db.prepare(`DELETE FROM whatsapp_templates WHERE id = ?`).run(req.params.id);
+  res.json({ success: true });
+});
+
+/* ---------- Conversas e mensagens (Atendimento / Inbox) ---------- */
+app.get('/api/whatsapp/conversas', requireApiAuth, (req, res) => {
+  const conversas = db.prepare(`
+    SELECT co.*, c.nome as contato_nome, c.telefone as contato_telefone, c.etapa_funil,
+      (SELECT texto FROM whatsapp_mensagens m WHERE m.conversa_id = co.id ORDER BY m.criado_em DESC LIMIT 1) as ultima_mensagem_texto
+    FROM whatsapp_conversas co
+    JOIN whatsapp_contatos c ON c.id = co.contato_id
+    ORDER BY co.ultima_mensagem_em DESC
+  `).all();
+  res.json(conversas);
+});
+
+app.get('/api/whatsapp/conversas/:id/mensagens', requireApiAuth, (req, res) => {
+  const conversa = db.prepare(`SELECT * FROM whatsapp_conversas WHERE id = ?`).get(req.params.id);
+  if (!conversa) return res.status(404).json({ error: 'Conversa não encontrada' });
+
+  db.prepare(`UPDATE whatsapp_conversas SET nao_lida = 0 WHERE id = ?`).run(req.params.id);
+  res.json(db.prepare(`SELECT * FROM whatsapp_mensagens WHERE conversa_id = ? ORDER BY criado_em ASC`).all(req.params.id));
+});
+
+app.post('/api/whatsapp/conversas/:id/mensagens', requireApiAuth, async (req, res) => {
+  const conversa = db.prepare(`SELECT * FROM whatsapp_conversas WHERE id = ?`).get(req.params.id);
+  if (!conversa) return res.status(404).json({ error: 'Conversa não encontrada' });
+  const contato = db.prepare(`SELECT * FROM whatsapp_contatos WHERE id = ?`).get(conversa.contato_id);
+
+  const { texto } = req.body;
+  if (!texto || !texto.trim()) return res.status(400).json({ error: 'Texto é obrigatório' });
+
+  const envio = await enviarMensagemWhatsapp(contato.telefone, texto.trim());
+  const result = db.prepare(`
+    INSERT INTO whatsapp_mensagens (conversa_id, direcao, texto, status, wa_message_id)
+    VALUES (?, 'saida', ?, ?, ?)
+  `).run(req.params.id, texto.trim(), envio.ok ? 'enviado' : 'falhou', envio.wa_message_id || null);
+
+  db.prepare(`UPDATE whatsapp_conversas SET ultima_mensagem_em = CURRENT_TIMESTAMP WHERE id = ?`).run(req.params.id);
+
+  const mensagem = db.prepare(`SELECT * FROM whatsapp_mensagens WHERE id = ?`).get(result.lastInsertRowid);
+  if (!envio.ok) return res.status(201).json({ ...mensagem, aviso: envio.error });
+  res.status(201).json(mensagem);
+});
+
+/* ---------- Métricas de conversão ---------- */
+app.get('/api/whatsapp/metricas', requireApiAuth, (req, res) => {
+  const por_etapa = {};
+  WHATSAPP_FUNIL_ETAPAS.forEach(e => { por_etapa[e] = 0; });
+  db.prepare(`SELECT etapa_funil, COUNT(*) as c FROM whatsapp_contatos GROUP BY etapa_funil`).all().forEach(l => {
+    if (l.etapa_funil in por_etapa) por_etapa[l.etapa_funil] = l.c;
+  });
+
+  const contatos_por_dia = db.prepare(`
+    SELECT date(criado_em) as dia, COUNT(*) as c
+    FROM whatsapp_contatos
+    WHERE criado_em >= datetime('now', '-30 days')
+    GROUP BY dia ORDER BY dia ASC
+  `).all();
+
+  res.json({ etapas: WHATSAPP_FUNIL_ETAPAS, por_etapa, contatos_por_dia });
+});
+
+/* ============================================================
+   API — Webhook do WhatsApp Cloud API (Meta) — PÚBLICO, sem auth,
+   pois é a própria Meta quem chama essas rotas diretamente.
+   ============================================================ */
+app.get('/api/public/whatsapp/webhook', (req, res) => {
+  const modo = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  const config = getWhatsappConfig();
+
+  if (modo === 'subscribe' && config && config.webhook_verify_token && token === config.webhook_verify_token) {
+    return res.status(200).send(challenge);
+  }
+  res.sendStatus(403);
+});
+
+app.post('/api/public/whatsapp/webhook', (req, res) => {
+  try {
+    const entry = req.body?.entry?.[0];
+    const change = entry?.changes?.[0];
+    const value = change?.value;
+
+    const mensagensRecebidas = value?.messages || [];
+    mensagensRecebidas.forEach(msg => {
+      const telefone = msg?.from;
+      if (!telefone) return;
+      const nomeContato = value?.contacts?.[0]?.profile?.name || null;
+
+      let contato = db.prepare(`SELECT * FROM whatsapp_contatos WHERE telefone = ?`).get(telefone);
+      if (!contato) {
+        const result = db.prepare(`INSERT INTO whatsapp_contatos (telefone, nome) VALUES (?, ?)`).run(telefone, nomeContato);
+        contato = db.prepare(`SELECT * FROM whatsapp_contatos WHERE id = ?`).get(result.lastInsertRowid);
+      }
+
+      let conversa = db.prepare(`SELECT * FROM whatsapp_conversas WHERE contato_id = ?`).get(contato.id);
+      if (!conversa) {
+        const result = db.prepare(`INSERT INTO whatsapp_conversas (contato_id) VALUES (?)`).run(contato.id);
+        conversa = db.prepare(`SELECT * FROM whatsapp_conversas WHERE id = ?`).get(result.lastInsertRowid);
+      }
+
+      const texto = msg?.text?.body || (msg?.type ? `[${msg.type}]` : null);
+      db.prepare(`
+        INSERT INTO whatsapp_mensagens (conversa_id, direcao, texto, status, wa_message_id)
+        VALUES (?, 'entrada', ?, 'recebido', ?)
+      `).run(conversa.id, texto, msg?.id || null);
+
+      db.prepare(`UPDATE whatsapp_conversas SET ultima_mensagem_em = CURRENT_TIMESTAMP, nao_lida = 1 WHERE id = ?`).run(conversa.id);
+    });
+
+    const statusUpdates = value?.statuses || [];
+    statusUpdates.forEach(st => {
+      if (!st?.id) return;
+      db.prepare(`UPDATE whatsapp_mensagens SET status = ? WHERE wa_message_id = ?`).run(st.status || 'atualizado', st.id);
+    });
+  } catch (err) {
+    console.error('Erro ao processar webhook do WhatsApp:', err);
+  }
+  /* Sempre responde 200 rápido — a Meta reenvia (e pode até suspender o
+     webhook) se a resposta demorar ou vier com erro. */
+  res.sendStatus(200);
 });
 
 /* ============================================================
